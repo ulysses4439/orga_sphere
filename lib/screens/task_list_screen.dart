@@ -16,54 +16,81 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final tasks = _taskService.getInstancesSorted();
+    final activeTasks = _taskService.getActiveInstances();
+    final archivedTasks = _taskService.getArchivedInstances();
 
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('OrgaSphere'),
-        elevation: 0,
-        backgroundColor: Colors.deepPurple,
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        appBar: AppBar(
+          title: const Text('OrgaSphere'),
+          elevation: 0,
+          backgroundColor: Colors.deepPurple,
+          bottom: const TabBar(
+            tabs: [
+              Tab(text: 'Aktiv'),
+              Tab(text: 'Archiv'),
+            ],
+          ),
+        ),
+        body: TabBarView(
+          children: [
+            _buildTaskList(activeTasks, 'Keine aktiven Aufgaben vorhanden'),
+            _buildTaskList(archivedTasks, 'Keine archivierten Aufgaben vorhanden'),
+          ],
+        ),
+        floatingActionButton: FloatingActionButton(
+          onPressed: () {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Neue Aufgabe hinzufügen (kommt bald)')),
+            );
+          },
+          backgroundColor: Colors.deepPurple,
+          child: const Icon(Icons.add),
+        ),
       ),
-      body: tasks.isEmpty
-          ? Center(
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    Icons.task_alt,
-                    size: 64,
-                    color: Colors.grey[400],
-                  ),
-                  const SizedBox(height: 16),
-                  Text(
-                    'Keine Aufgaben vorhanden',
-                    style: Theme.of(context).textTheme.titleLarge,
-                  ),
-                ],
-              ),
-            )
-          : ListView.builder(
-              padding: const EdgeInsets.all(8),
-              itemCount: tasks.length,
-              itemBuilder: (context, index) {
-                final task = tasks[index];
-                return _TaskListItem(
-                  task: task,
-                  onTap: () {
-                    Navigator.of(context).pushNamed('/task-detail', arguments: task.id);
-                  },
-                );
-              },
+    );
+  }
+
+  Widget _buildTaskList(List<TaskInstance> tasks, String emptyMessage) {
+    if (tasks.isEmpty) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              Icons.task_alt,
+              size: 64,
+              color: Colors.grey[400],
             ),
-      floatingActionButton: FloatingActionButton(
-        onPressed: () {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Neue Aufgabe hinzufügen (kommt bald)')),
-          );
-        },
-        backgroundColor: Colors.deepPurple,
-        child: const Icon(Icons.add),
-      ),
+            const SizedBox(height: 16),
+            Text(
+              emptyMessage,
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+          ],
+        ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(8),
+      itemCount: tasks.length,
+      itemBuilder: (context, index) {
+        final task = tasks[index];
+        final template = _taskService.getTemplateById(task.templateId);
+        final recurrenceLabel = template?.recurrence.germanLabel ?? 'Unbekannt';
+        final domainName = _taskService.getDomainById(task.domainId)?.name ?? 'Allgemein';
+
+        return _TaskListItem(
+          task: task,
+          domainName: domainName,
+          recurrenceLabel: recurrenceLabel,
+          onTap: () {
+            Navigator.of(context).pushNamed('/task-detail', arguments: task.id);
+          },
+        );
+      },
     );
   }
 }
@@ -71,16 +98,20 @@ class _TaskListScreenState extends State<TaskListScreen> {
 /// Individual task list item widget
 class _TaskListItem extends StatelessWidget {
   final TaskInstance task;
+  final String domainName;
+  final String recurrenceLabel;
   final VoidCallback onTap;
 
   const _TaskListItem({
     required this.task,
+    required this.domainName,
+    required this.recurrenceLabel,
     required this.onTap,
   });
 
   @override
   Widget build(BuildContext context) {
-    final dueDate = task.getDueDate();
+    final dueDate = task.dueDate;
     final isOverdue = task.isOverdue;
     final isUpcoming = task.isUpcoming;
 
@@ -110,8 +141,20 @@ class _TaskListItem extends StatelessWidget {
           children: [
             const SizedBox(height: 4),
             Text(
+              'Bereich: $domainName',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 4),
+            Text(
               'Jahr: ${task.year} | Fällig: ${dueDate.day}. ${_monthName(dueDate.month)}',
               style: Theme.of(context).textTheme.bodySmall,
+            ),
+            const SizedBox(height: 4),
+            Text(
+              recurrenceLabel,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: Colors.grey[700],
+                  ),
             ),
             const SizedBox(height: 4),
             Row(

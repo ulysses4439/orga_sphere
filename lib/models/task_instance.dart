@@ -1,54 +1,48 @@
 import 'task_status.dart';
 import 'task_log_entry.dart';
 
-/// A specific instance of a recurring task
-/// Represents one year's "capsule" of a task template
+/// A specific instance of a task.
+/// Contains a single occurrence with due date and timeline.
 class TaskInstance {
   final String id;
   final String templateId;
-  final int year;
+  final String domainId;
   final String title;
   final String description;
-  final int startMonth;
-  final int dueDay;
-  final int dueMonth;
-  
+  final DateTime startDate;
+  final DateTime dueDate;
+
   TaskStatus status;
   final DateTime createdAt;
   DateTime? completedAt;
-  
+
   /// Activity log for this task instance
   final List<TaskLogEntry> logEntries;
 
   TaskInstance({
     required this.id,
     required this.templateId,
-    required this.year,
+    required this.domainId,
     required this.title,
     required this.description,
-    required this.startMonth,
-    required this.dueDay,
-    required this.dueMonth,
+    required this.startDate,
+    required this.dueDate,
     this.status = TaskStatus.open,
     required this.createdAt,
     this.completedAt,
     List<TaskLogEntry>? logEntries,
   }) : logEntries = logEntries ?? [];
 
-  /// Calculate the due date for this instance
-  DateTime getDueDate() {
-    return DateTime(year, dueMonth, dueDay);
-  }
+  int get year => dueDate.year;
 
   /// Check if this task is overdue
   bool get isOverdue {
     if (status == TaskStatus.done) return false;
-    return DateTime.now().isAfter(getDueDate());
+    return DateTime.now().isAfter(dueDate);
   }
 
   /// Check if this task is upcoming (within next 30 days)
   bool get isUpcoming {
-    final dueDate = getDueDate();
     final now = DateTime.now();
     final inThirtyDays = now.add(const Duration(days: 30));
     return !isOverdue && dueDate.isBefore(inThirtyDays);
@@ -70,12 +64,11 @@ class TaskInstance {
   TaskInstance copyWith({
     String? id,
     String? templateId,
-    int? year,
+    String? domainId,
     String? title,
     String? description,
-    int? startMonth,
-    int? dueDay,
-    int? dueMonth,
+    DateTime? startDate,
+    DateTime? dueDate,
     TaskStatus? status,
     DateTime? createdAt,
     DateTime? completedAt,
@@ -84,12 +77,11 @@ class TaskInstance {
     return TaskInstance(
       id: id ?? this.id,
       templateId: templateId ?? this.templateId,
-      year: year ?? this.year,
+      domainId: domainId ?? this.domainId,
       title: title ?? this.title,
       description: description ?? this.description,
-      startMonth: startMonth ?? this.startMonth,
-      dueDay: dueDay ?? this.dueDay,
-      dueMonth: dueMonth ?? this.dueMonth,
+      startDate: startDate ?? this.startDate,
+      dueDate: dueDate ?? this.dueDate,
       status: status ?? this.status,
       createdAt: createdAt ?? this.createdAt,
       completedAt: completedAt ?? this.completedAt,

@@ -57,13 +57,17 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   }
 
   void _markAsDone() {
+    final template = _task != null ? _taskService.getTemplateById(_task!.templateId) : null;
+    final isRecurring = template?.recurrence.isRecurring ?? false;
+    final confirmationText = isRecurring
+        ? 'Dies markiert die Aufgabe als abgeschlossen und erstellt automatisch eine neue Wiederholung.'
+        : 'Dies markiert die Aufgabe als abgeschlossen. Es wird keine neue Aufgabe erstellt.';
+
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         title: const Text('Aufgabe als fertig markieren?'),
-        content: Text(
-          'Dies markiert die Aufgabe als abgeschlossen und erstellt automatisch eine neue Instanz für ${_task!.year + 1}.',
-        ),
+        content: Text(confirmationText),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
@@ -97,7 +101,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     }
 
     final task = _task!;
-    final dueDate = task.getDueDate();
+    final dueDate = task.dueDate;
+    final domain = _taskService.getDomainById(task.domainId);
+    final template = _taskService.getTemplateById(task.templateId);
+    final recurrenceLabel = template?.recurrence.germanLabel ?? 'Einmalig';
 
     return Scaffold(
       appBar: AppBar(
@@ -111,7 +118,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             // Task header with title and year
             Container(
               padding: const EdgeInsets.all(16),
-              color: Colors.deepPurple.withOpacity(0.1),
+              color: const Color.fromRGBO(94, 53, 177, 0.1),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -147,9 +154,13 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 children: [
                   _buildInfoSection('Beschreibung', task.description),
                   const SizedBox(height: 16),
+                  _buildInfoRow('Bereich', domain?.name ?? 'Allgemein'),
+                  const SizedBox(height: 8),
+                  _buildInfoRow('Wiederholung', recurrenceLabel),
+                  const SizedBox(height: 8),
                   _buildInfoRow('Fällig am', '${dueDate.day}. ${_monthName(dueDate.month)} ${dueDate.year}'),
                   const SizedBox(height: 8),
-                  _buildInfoRow('Startmonat', _monthName(task.startMonth)),
+                  _buildInfoRow('Startdatum', '${task.startDate.day}. ${_monthName(task.startDate.month)} ${task.startDate.year}'),
                   const SizedBox(height: 8),
                   _buildInfoRow('Erstellt am', '${task.createdAt.day}. ${_monthName(task.createdAt.month)} ${task.createdAt.year}'),
                   if (task.completedAt != null) ...[

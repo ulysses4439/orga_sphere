@@ -1,15 +1,18 @@
 import 'package:uuid/uuid.dart';
 import '../models/models.dart';
 
-/// Service for managing task templates and instances
-/// Handles business logic like creating instances and auto-generation
+/// Service for managing task domains, templates and instances.
+/// Supports flexible recurrence, one-time tasks, and an archive of completed work.
 class TaskService {
   static final TaskService _instance = TaskService._internal();
 
-  /// Templates that define recurring tasks
+  /// Domains that group tasks.
+  final List<TaskDomain> _domains = [];
+
+  /// Templates that define tasks.
   final List<TaskTemplate> _templates = [];
 
-  /// Instances (year-specific task capsules)
+  /// Task instances, including completed archive items.
   final List<TaskInstance> _instances = [];
 
   TaskService._internal() {
@@ -22,70 +25,111 @@ class TaskService {
 
   /// Initialize with mock data
   void _initializeMockData() {
-    // Clear any existing data
+    _domains.clear();
     _templates.clear();
     _instances.clear();
 
-    // Create sample templates
+    final domainClub = TaskDomain(
+      id: 'domain-club',
+      name: 'Verein',
+      description: 'Aufgaben rund um den Vereinsbetrieb',
+    );
+
+    final domainWork = TaskDomain(
+      id: 'domain-work',
+      name: 'Arbeit',
+      description: 'Team- und Projektaufgaben aus dem Job',
+    );
+
+    final domainPrivate = TaskDomain(
+      id: 'domain-private',
+      name: 'Privat',
+      description: 'Persönliche Aufgaben und Dokumentationsaufgaben',
+    );
+
+    _domains.addAll([domainClub, domainWork, domainPrivate]);
+
     final template1 = TaskTemplate(
       id: 'template-1',
+      domainId: domainClub.id,
       title: 'Finalisiere Theatervertrag',
       description:
           'Überprüfe und aktualisiere den jährlichen Theatervertrag mit der lokalen Bühne.',
-      startMonth: 1,
-      dueDay: 31,
-      dueMonth: 3,
+      startDate: DateTime(2026, 1, 1),
+      dueDate: DateTime(2026, 3, 31),
+      recurrence: const RecurrencePattern(
+        frequency: RecurrenceFrequency.yearly,
+      ),
       createdAt: DateTime(2024, 1, 15),
     );
 
     final template2 = TaskTemplate(
       id: 'template-2',
+      domainId: domainClub.id,
       title: 'Jahresabrechnung erstellen',
       description:
           'Erstelle die finanzielle Jahresabrechnung und bereite den Bericht vor.',
-      startMonth: 1,
-      dueDay: 28,
-      dueMonth: 2,
+      startDate: DateTime(2026, 1, 1),
+      dueDate: DateTime(2026, 2, 28),
+      recurrence: const RecurrencePattern(
+        frequency: RecurrenceFrequency.yearly,
+      ),
       createdAt: DateTime(2024, 1, 20),
     );
 
     final template3 = TaskTemplate(
       id: 'template-3',
+      domainId: domainClub.id,
       title: 'Mitgliederverwaltung aktualisieren',
       description:
           'Aktualisiere die Kontaktdaten aller aktiven Mitglieder und überprüfe Zugehörigkeiten.',
-      startMonth: 3,
-      dueDay: 15,
-      dueMonth: 4,
+      startDate: DateTime(2026, 3, 1),
+      dueDate: DateTime(2026, 4, 15),
+      recurrence: const RecurrencePattern(
+        frequency: RecurrenceFrequency.monthly,
+        interval: 6,
+      ),
       createdAt: DateTime(2024, 1, 10),
     );
 
     final template4 = TaskTemplate(
       id: 'template-4',
+      domainId: domainWork.id,
       title: 'Halbjahrestreffen planen',
       description:
           'Organisiere das halbjährliche Team-Treffen und versende Einladungen.',
-      startMonth: 6,
-      dueDay: 30,
-      dueMonth: 6,
+      startDate: DateTime(2026, 6, 1),
+      dueDate: DateTime(2026, 6, 30),
+      recurrence: const RecurrencePattern(
+        frequency: RecurrenceFrequency.monthly,
+        interval: 6,
+      ),
       createdAt: DateTime(2024, 1, 25),
     );
 
-    _templates.addAll([template1, template2, template3, template4]);
+    final template5 = TaskTemplate(
+      id: 'template-5',
+      domainId: domainPrivate.id,
+      title: 'Einmalige Hausübung erledigen',
+      description: 'Bereite die Präsentation für den privaten Workshop vor.',
+      startDate: DateTime(2026, 5, 1),
+      dueDate: DateTime(2026, 5, 15),
+      recurrence: const RecurrencePattern(
+        frequency: RecurrenceFrequency.none,
+      ),
+      createdAt: DateTime(2026, 4, 20),
+    );
 
-    // Create instances for 2026
-    _createInstancesForTemplate(template1, 2026);
-    _createInstancesForTemplate(template2, 2026);
-    _createInstancesForTemplate(template3, 2026);
-    _createInstancesForTemplate(template4, 2026);
+    _templates.addAll([template1, template2, template3, template4, template5]);
 
-    // Create instances for 2027
-    _createInstancesForTemplate(template1, 2027);
-    _createInstancesForTemplate(template2, 2027);
+    _createInstanceForTemplate(template1);
+    _createInstanceForTemplate(template2);
+    _createInstanceForTemplate(template3);
+    _createInstanceForTemplate(template4);
+    _createInstanceForTemplate(template5);
 
-    // Add some sample log entries to demonstrate the timeline
     final instance1 = _instances.firstWhere(
-      (i) => i.templateId == 'template-1' && i.year == 2026,
+      (i) => i.templateId == 'template-1' && i.dueDate.year == 2026,
     );
 
     instance1.addLogEntry(TaskLogEntry(
@@ -109,9 +153,8 @@ class TaskService {
       text: 'Vertrag mit Anmerkungen weitergeleitet',
     ));
 
-    // Add log entry to another task
     final instance2 = _instances.firstWhere(
-      (i) => i.templateId == 'template-2' && i.year == 2026,
+      (i) => i.templateId == 'template-2' && i.dueDate.year == 2026,
     );
 
     instance2.status = TaskStatus.inProgress;
@@ -123,56 +166,74 @@ class TaskService {
     ));
   }
 
-  /// Create an instance from a template for a specific year
-  void _createInstancesForTemplate(TaskTemplate template, int year) {
+  void _createInstanceForTemplate(TaskTemplate template) {
     final instance = TaskInstance(
-      id: 'instance-${template.id}-$year',
+      id: 'instance-${template.id}-${template.dueDate.toIso8601String()}',
       templateId: template.id,
-      year: year,
+      domainId: template.domainId,
       title: template.title,
       description: template.description,
-      startMonth: template.startMonth,
-      dueDay: template.dueDay,
-      dueMonth: template.dueMonth,
+      startDate: template.startDate,
+      dueDate: template.dueDate,
       createdAt: DateTime.now(),
     );
     _instances.add(instance);
   }
 
-  /// Get all templates
+  List<TaskDomain> getDomains() => List.unmodifiable(_domains);
   List<TaskTemplate> getTemplates() => List.unmodifiable(_templates);
-
-  /// Get all instances
-  List<TaskInstance> getInstances() => List.unmodifiable(_instances);
-
-  /// Get instances for a specific year
-  List<TaskInstance> getInstancesByYear(int year) {
-    return _instances.where((i) => i.year == year).toList();
+  TaskTemplate? getTemplateById(String id) {
+    try {
+      return _templates.firstWhere((t) => t.id == id);
+    } catch (_) {
+      return null;
+    }
   }
 
-  /// Get instances sorted by due date (with overdue/upcoming first)
-  List<TaskInstance> getInstancesSorted() {
+  List<TaskInstance> getInstances() => List.unmodifiable(_instances);
+
+  List<TaskInstance> getActiveInstances() {
+    return _instances.where((i) => i.status != TaskStatus.done).toList();
+  }
+
+  List<TaskInstance> getArchivedInstances() {
+    return _instances.where((i) => i.status == TaskStatus.done).toList();
+  }
+
+  List<TaskInstance> getInstancesByDomain(String domainId) {
+    return _instances.where((i) => i.domainId == domainId).toList();
+  }
+
+  List<TaskInstance> getInstancesSorted({bool includeDone = true}) {
     final sorted = List<TaskInstance>.from(_instances);
     sorted.sort((a, b) {
-      // Completed tasks go to the bottom
+      if (!includeDone) {
+        if (a.status == TaskStatus.done && b.status != TaskStatus.done) return 1;
+        if (a.status != TaskStatus.done && b.status == TaskStatus.done) return -1;
+      }
+
       if (a.status == TaskStatus.done && b.status != TaskStatus.done) return 1;
       if (a.status != TaskStatus.done && b.status == TaskStatus.done) return -1;
 
-      // Overdue tasks first
       if (a.isOverdue && !b.isOverdue) return -1;
       if (!a.isOverdue && b.isOverdue) return 1;
 
-      // Then upcoming tasks
       if (a.isUpcoming && !b.isUpcoming) return -1;
       if (!a.isUpcoming && b.isUpcoming) return 1;
 
-      // Then sort by due date
-      return a.getDueDate().compareTo(b.getDueDate());
+      return a.dueDate.compareTo(b.dueDate);
     });
     return sorted;
   }
 
-  /// Get a specific instance by ID
+  TaskDomain? getDomainById(String id) {
+    try {
+      return _domains.firstWhere((d) => d.id == id);
+    } catch (_) {
+      return null;
+    }
+  }
+
   TaskInstance? getInstanceById(String id) {
     try {
       return _instances.firstWhere((i) => i.id == id);
@@ -181,7 +242,6 @@ class TaskService {
     }
   }
 
-  /// Update an instance
   void updateInstance(TaskInstance instance) {
     final index = _instances.indexWhere((i) => i.id == instance.id);
     if (index >= 0) {
@@ -189,23 +249,31 @@ class TaskService {
     }
   }
 
-  /// Mark an instance as done and auto-create next year's instance
   void markAsDone(String instanceId) {
     final instance = getInstanceById(instanceId);
     if (instance != null && instance.status != TaskStatus.done) {
       instance.markAsDone();
-
-      // Auto-create next year's instance
-      final template = _templates.firstWhere(
-        (t) => t.id == instance.templateId,
-      );
-      _createInstancesForTemplate(template, instance.year + 1);
-
       updateInstance(instance);
+
+      final template = _templates.firstWhere((t) => t.id == instance.templateId);
+      if (template.recurrence.isRecurring) {
+        final newStartDate = template.recurrence.nextDate(instance.startDate);
+        final newDueDate = template.recurrence.nextDate(instance.dueDate);
+        final nextInstance = TaskInstance(
+          id: 'instance-${template.id}-${newDueDate.toIso8601String()}',
+          templateId: template.id,
+          domainId: template.domainId,
+          title: template.title,
+          description: template.description,
+          startDate: newStartDate,
+          dueDate: newDueDate,
+          createdAt: DateTime.now(),
+        );
+        _instances.add(nextInstance);
+      }
     }
   }
 
-  /// Add a log entry to an instance
   void addLogEntry(String instanceId, String user, String text) {
     final instance = getInstanceById(instanceId);
     if (instance != null) {
@@ -219,8 +287,8 @@ class TaskService {
     }
   }
 
-  /// Reset all data (useful for testing)
   void reset() {
+    _domains.clear();
     _templates.clear();
     _instances.clear();
     _initializeMockData();

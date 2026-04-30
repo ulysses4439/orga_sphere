@@ -1,51 +1,56 @@
-/// Template for a recurring task
-/// Defines the structure and rules for yearly recurring tasks
+import 'task_recurrence.dart';
+
+/// Template for a task.
+/// Supports domains, one-time tasks and flexible recurrence rhythms.
 class TaskTemplate {
   final String id;
+  final String domainId;
   final String title;
   final String description;
-  
-  /// Month when the task becomes relevant (1-12)
-  final int startMonth;
-  
-  /// Day of the due date (1-31)
-  final int dueDay;
-  
-  /// Month of the due date (1-12)
-  final int dueMonth;
 
-  /// Timestamp when this template was created
+  /// Date when the task becomes relevant.
+  final DateTime startDate;
+
+  /// Due date for the task item.
+  final DateTime dueDate;
+
+  final RecurrencePattern recurrence;
+
+  /// Timestamp when this template was created.
   final DateTime createdAt;
 
   TaskTemplate({
     required this.id,
+    required this.domainId,
     required this.title,
     required this.description,
-    required this.startMonth,
-    required this.dueDay,
-    required this.dueMonth,
+    required this.startDate,
+    required this.dueDate,
+    required this.recurrence,
     required this.createdAt,
-  }) : assert(startMonth >= 1 && startMonth <= 12),
-       assert(dueDay >= 1 && dueDay <= 31),
-       assert(dueMonth >= 1 && dueMonth <= 12);
+  }) : assert(startDate.isBefore(dueDate) || startDate.isAtSameMomentAs(dueDate));
 
-  /// Create a copy with modified fields
+  bool get isOneTime => recurrence.frequency == RecurrenceFrequency.none;
+
+  /// Create a copy with modified fields.
   TaskTemplate copyWith({
     String? id,
+    String? domainId,
     String? title,
     String? description,
-    int? startMonth,
-    int? dueDay,
-    int? dueMonth,
+    DateTime? startDate,
+    DateTime? dueDate,
+    RecurrencePattern? recurrence,
     DateTime? createdAt,
   }) {
     return TaskTemplate(
       id: id ?? this.id,
+      domainId: domainId ?? this.domainId,
       title: title ?? this.title,
       description: description ?? this.description,
-      startMonth: startMonth ?? this.startMonth,
-      dueDay: dueDay ?? this.dueDay,
-      dueMonth: dueMonth ?? this.dueMonth,
+      startDate: startDate ?? this.startDate,
+      dueDate: dueDate ?? this.dueDate,
+      recurrence: recurrence ?? this.recurrence,
       createdAt: createdAt ?? this.createdAt,
     );
   }
