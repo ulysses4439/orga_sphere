@@ -2,8 +2,6 @@ import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/task_service.dart';
 
-/// Main screen displaying all task instances
-/// Tasks are sorted by relevance (overdue first, then upcoming, then by due date)
 class TaskListScreen extends StatefulWidget {
   const TaskListScreen({super.key});
 
@@ -16,9 +14,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final activeTasks = _taskService.getActiveInstances();
-    final archivedTasks = _taskService.getArchivedInstances();
-
     return DefaultTabController(
       length: 2,
       child: Scaffold(
@@ -33,11 +28,46 @@ class _TaskListScreenState extends State<TaskListScreen> {
             ],
           ),
         ),
-        body: TabBarView(
-          children: [
-            _buildTaskList(activeTasks, 'Keine aktiven Aufgaben vorhanden'),
-            _buildTaskList(archivedTasks, 'Keine archivierten Aufgaben vorhanden'),
-          ],
+        body: FutureBuilder<void>(
+          future: _taskService.ready,
+          builder: (context, snapshot) {
+            if (snapshot.connectionState != ConnectionState.done) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            if (snapshot.hasError) {
+              return Center(
+                child: Column(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    const Icon(Icons.cloud_off, size: 64, color: Colors.red),
+                    const SizedBox(height: 16),
+                    Text(
+                      'Verbindungsfehler',
+                      style: Theme.of(context).textTheme.titleLarge,
+                    ),
+                    const SizedBox(height: 8),
+                    Text(
+                      '${snapshot.error}',
+                      style: Theme.of(context).textTheme.bodySmall,
+                      textAlign: TextAlign.center,
+                    ),
+                  ],
+                ),
+              );
+            }
+            return TabBarView(
+              children: [
+                _buildTaskList(
+                  _taskService.getActiveInstances(),
+                  'Keine aktiven Aufgaben vorhanden',
+                ),
+                _buildTaskList(
+                  _taskService.getArchivedInstances(),
+                  'Keine archivierten Aufgaben vorhanden',
+                ),
+              ],
+            );
+          },
         ),
         floatingActionButton: FloatingActionButton(
           onPressed: () {
@@ -58,16 +88,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(
-              Icons.task_alt,
-              size: 64,
-              color: Colors.grey[400],
-            ),
+            Icon(Icons.task_alt, size: 64, color: Colors.grey[400]),
             const SizedBox(height: 16),
-            Text(
-              emptyMessage,
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
+            Text(emptyMessage, style: Theme.of(context).textTheme.titleLarge),
           ],
         ),
       );
@@ -86,8 +109,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
           task: task,
           domainName: domainName,
           recurrenceLabel: recurrenceLabel,
-          onTap: () {
-            Navigator.of(context).pushNamed('/task-detail', arguments: task.id);
+          onTap: () async {
+            await Navigator.of(context).pushNamed('/task-detail', arguments: task.id);
+            setState(() {}); // refresh list after returning from detail
           },
         );
       },
@@ -95,7 +119,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
   }
 }
 
-/// Individual task list item widget
 class _TaskListItem extends StatelessWidget {
   final TaskInstance task;
   final String domainName;
@@ -115,7 +138,6 @@ class _TaskListItem extends StatelessWidget {
     final isOverdue = task.isOverdue;
     final isUpcoming = task.isUpcoming;
 
-    // Determine the color accent based on status
     Color statusColor = Colors.grey;
     IconData statusIcon = Icons.radio_button_unchecked;
 
@@ -140,10 +162,7 @@ class _TaskListItem extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 4),
-            Text(
-              'Bereich: $domainName',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
+            Text('Bereich: $domainName', style: Theme.of(context).textTheme.bodySmall),
             const SizedBox(height: 4),
             Text(
               'Jahr: ${task.year} | Fällig: ${dueDate.day}. ${_monthName(dueDate.month)}',
@@ -152,9 +171,7 @@ class _TaskListItem extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               recurrenceLabel,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: Colors.grey[700],
-                  ),
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[700]),
             ),
             const SizedBox(height: 4),
             Row(
@@ -172,9 +189,10 @@ class _TaskListItem extends StatelessWidget {
                 if (task.logEntries.isNotEmpty)
                   Text(
                     '${task.logEntries.length} Einträge',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                          color: Colors.grey[600],
-                        ),
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: Colors.grey[600]),
                   ),
               ],
             ),
@@ -186,34 +204,16 @@ class _TaskListItem extends StatelessWidget {
     );
   }
 
-  /// Get German month name
   String _monthName(int month) {
-    const months = [
-      'Jan',
-      'Feb',
-      'Mär',
-      'Apr',
-      'Mai',
-      'Jun',
-      'Jul',
-      'Aug',
-      'Sep',
-      'Okt',
-      'Nov',
-      'Dez'
-    ];
+    const months = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
     return months[month - 1];
   }
 
-  /// Get background color for status chip
   Color _statusBackgroundColor(TaskStatus status) {
     switch (status) {
-      case TaskStatus.open:
-        return Colors.grey;
-      case TaskStatus.inProgress:
-        return Colors.blue;
-      case TaskStatus.done:
-        return Colors.green;
+      case TaskStatus.open:       return Colors.grey;
+      case TaskStatus.inProgress: return Colors.blue;
+      case TaskStatus.done:       return Colors.green;
     }
   }
 }

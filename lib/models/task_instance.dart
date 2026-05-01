@@ -33,6 +33,26 @@ class TaskInstance {
     List<TaskLogEntry>? logEntries,
   }) : logEntries = logEntries ?? [];
 
+  factory TaskInstance.fromJson(Map<String, dynamic> json) {
+    return TaskInstance(
+      id: json['id'] as String,
+      templateId: json['templateId'] as String,
+      domainId: json['domainId'] as String,
+      title: json['title'] as String,
+      description: json['description'] as String? ?? '',
+      startDate: DateTime.parse(json['startDate'] as String),
+      dueDate: DateTime.parse(json['dueDate'] as String),
+      status: TaskStatus.values.firstWhere(
+        (s) => s.name == (json['status'] as String? ?? 'open'),
+        orElse: () => TaskStatus.open,
+      ),
+      createdAt: DateTime.parse(json['createdAt'] as String),
+      completedAt: json['completedAt'] != null
+          ? DateTime.parse(json['completedAt'] as String)
+          : null,
+    );
+  }
+
   int get year => dueDate.year;
 
   /// Check if this task is overdue

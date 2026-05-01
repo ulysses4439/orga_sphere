@@ -13,6 +13,15 @@ class TaskLogEntry {
     required this.text,
   });
 
+  factory TaskLogEntry.fromJson(Map<String, dynamic> json) {
+    return TaskLogEntry(
+      id: json['id'] as String,
+      user: json['user'] as String? ?? 'Unbekannt',
+      timestamp: DateTime.parse(json['timestamp'] as String),
+      text: json['text'] as String,
+    );
+  }
+
   /// Create a copy with modified fields
   TaskLogEntry copyWith({
     String? id,

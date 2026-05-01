@@ -1,234 +1,73 @@
-import 'package:uuid/uuid.dart';
 import '../models/models.dart';
+import 'api_service.dart';
 
-/// Service for managing task domains, templates and instances.
-/// Supports flexible recurrence, one-time tasks, and an archive of completed work.
 class TaskService {
   static final TaskService _instance = TaskService._internal();
 
-  /// Domains that group tasks.
   final List<TaskDomain> _domains = [];
-
-  /// Templates that define tasks.
   final List<TaskTemplate> _templates = [];
-
-  /// Task instances, including completed archive items.
   final List<TaskInstance> _instances = [];
 
+  late final Future<void> _ready;
+
   TaskService._internal() {
-    _initializeMockData();
+    _ready = _loadAll();
   }
 
-  factory TaskService() {
-    return _instance;
+  factory TaskService() => _instance;
+
+  Future<void> get ready => _ready;
+
+  Future<void> _loadAll() async {
+    final domains = await ApiService.getDomains();
+    final templates = await ApiService.getTemplates();
+    final active = await ApiService.getActiveInstances();
+    final archived = await ApiService.getArchivedInstances();
+
+    _domains
+      ..clear()
+      ..addAll(domains);
+    _templates
+      ..clear()
+      ..addAll(templates);
+    _instances
+      ..clear()
+      ..addAll(active)
+      ..addAll(archived);
+
+    // Load log entries for all instances in parallel
+    await Future.wait(_instances.map((inst) async {
+      try {
+        final logs = await ApiService.getLogs(inst.id);
+        inst.logEntries.addAll(logs);
+      } catch (_) {}
+    }));
   }
 
-  /// Initialize with mock data
-  void _initializeMockData() {
+  Future<void> refresh() async {
     _domains.clear();
     _templates.clear();
     _instances.clear();
-
-    final domainClub = TaskDomain(
-      id: 'domain-club',
-      name: 'Verein',
-      description: 'Aufgaben rund um den Vereinsbetrieb',
-    );
-
-    final domainWork = TaskDomain(
-      id: 'domain-work',
-      name: 'Arbeit',
-      description: 'Team- und Projektaufgaben aus dem Job',
-    );
-
-    final domainPrivate = TaskDomain(
-      id: 'domain-private',
-      name: 'Privat',
-      description: 'Persönliche Aufgaben und Dokumentationsaufgaben',
-    );
-
-    _domains.addAll([domainClub, domainWork, domainPrivate]);
-
-    final template1 = TaskTemplate(
-      id: 'template-1',
-      domainId: domainClub.id,
-      title: 'Finalisiere Theatervertrag',
-      description:
-          'Überprüfe und aktualisiere den jährlichen Theatervertrag mit der lokalen Bühne.',
-      startDate: DateTime(2026, 1, 1),
-      dueDate: DateTime(2026, 3, 31),
-      recurrence: const RecurrencePattern(
-        frequency: RecurrenceFrequency.yearly,
-      ),
-      createdAt: DateTime(2024, 1, 15),
-    );
-
-    final template2 = TaskTemplate(
-      id: 'template-2',
-      domainId: domainClub.id,
-      title: 'Jahresabrechnung erstellen',
-      description:
-          'Erstelle die finanzielle Jahresabrechnung und bereite den Bericht vor.',
-      startDate: DateTime(2026, 1, 1),
-      dueDate: DateTime(2026, 2, 28),
-      recurrence: const RecurrencePattern(
-        frequency: RecurrenceFrequency.yearly,
-      ),
-      createdAt: DateTime(2024, 1, 20),
-    );
-
-    final template3 = TaskTemplate(
-      id: 'template-3',
-      domainId: domainClub.id,
-      title: 'Mitgliederverwaltung aktualisieren',
-      description:
-          'Aktualisiere die Kontaktdaten aller aktiven Mitglieder und überprüfe Zugehörigkeiten.',
-      startDate: DateTime(2026, 3, 1),
-      dueDate: DateTime(2026, 4, 15),
-      recurrence: const RecurrencePattern(
-        frequency: RecurrenceFrequency.monthly,
-        interval: 6,
-      ),
-      createdAt: DateTime(2024, 1, 10),
-    );
-
-    final template4 = TaskTemplate(
-      id: 'template-4',
-      domainId: domainWork.id,
-      title: 'Halbjahrestreffen planen',
-      description:
-          'Organisiere das halbjährliche Team-Treffen und versende Einladungen.',
-      startDate: DateTime(2026, 6, 1),
-      dueDate: DateTime(2026, 6, 30),
-      recurrence: const RecurrencePattern(
-        frequency: RecurrenceFrequency.monthly,
-        interval: 6,
-      ),
-      createdAt: DateTime(2024, 1, 25),
-    );
-
-    final template5 = TaskTemplate(
-      id: 'template-5',
-      domainId: domainPrivate.id,
-      title: 'Einmalige Hausübung erledigen',
-      description: 'Bereite die Präsentation für den privaten Workshop vor.',
-      startDate: DateTime(2026, 5, 1),
-      dueDate: DateTime(2026, 5, 15),
-      recurrence: const RecurrencePattern(
-        frequency: RecurrenceFrequency.none,
-      ),
-      createdAt: DateTime(2026, 4, 20),
-    );
-
-    _templates.addAll([template1, template2, template3, template4, template5]);
-
-    _createInstanceForTemplate(template1);
-    _createInstanceForTemplate(template2);
-    _createInstanceForTemplate(template3);
-    _createInstanceForTemplate(template4);
-    _createInstanceForTemplate(template5);
-
-    final instance1 = _instances.firstWhere(
-      (i) => i.templateId == 'template-1' && i.dueDate.year == 2026,
-    );
-
-    instance1.addLogEntry(TaskLogEntry(
-      id: 'log-1',
-      user: 'Steven',
-      timestamp: DateTime(2026, 1, 15, 10, 30),
-      text: 'E-Mail an das Theater gesendet mit Anfrage zum neuen Vertrag',
-    ));
-
-    instance1.addLogEntry(TaskLogEntry(
-      id: 'log-2',
-      user: 'Berni',
-      timestamp: DateTime(2026, 1, 20, 14, 0),
-      text: 'Antwort vom Theater erhalten. Überprüfe die neuen Klauseln.',
-    ));
-
-    instance1.addLogEntry(TaskLogEntry(
-      id: 'log-3',
-      user: 'Steven',
-      timestamp: DateTime(2026, 2, 5, 9, 15),
-      text: 'Vertrag mit Anmerkungen weitergeleitet',
-    ));
-
-    final instance2 = _instances.firstWhere(
-      (i) => i.templateId == 'template-2' && i.dueDate.year == 2026,
-    );
-
-    instance2.status = TaskStatus.inProgress;
-    instance2.addLogEntry(TaskLogEntry(
-      id: 'log-4',
-      user: 'Maria',
-      timestamp: DateTime(2026, 1, 25, 11, 0),
-      text: 'Zahlen vom Buchhaltungssystem exportiert',
-    ));
+    await _loadAll();
   }
 
-  void _createInstanceForTemplate(TaskTemplate template) {
-    final instance = TaskInstance(
-      id: 'instance-${template.id}-${template.dueDate.toIso8601String()}',
-      templateId: template.id,
-      domainId: template.domainId,
-      title: template.title,
-      description: template.description,
-      startDate: template.startDate,
-      dueDate: template.dueDate,
-      createdAt: DateTime.now(),
-    );
-    _instances.add(instance);
-  }
+  // --- Read (synchronous after initialization) ---
 
   List<TaskDomain> getDomains() => List.unmodifiable(_domains);
   List<TaskTemplate> getTemplates() => List.unmodifiable(_templates);
-  TaskTemplate? getTemplateById(String id) {
+  List<TaskInstance> getInstances() => List.unmodifiable(_instances);
+
+  TaskDomain? getDomainById(String id) {
     try {
-      return _templates.firstWhere((t) => t.id == id);
+      return _domains.firstWhere((d) => d.id == id);
     } catch (_) {
       return null;
     }
   }
 
-  List<TaskInstance> getInstances() => List.unmodifiable(_instances);
-
-  List<TaskInstance> getActiveInstances() {
-    return _instances.where((i) => i.status != TaskStatus.done).toList();
-  }
-
-  List<TaskInstance> getArchivedInstances() {
-    return _instances.where((i) => i.status == TaskStatus.done).toList();
-  }
-
-  List<TaskInstance> getInstancesByDomain(String domainId) {
-    return _instances.where((i) => i.domainId == domainId).toList();
-  }
-
-  List<TaskInstance> getInstancesSorted({bool includeDone = true}) {
-    final sorted = List<TaskInstance>.from(_instances);
-    sorted.sort((a, b) {
-      if (!includeDone) {
-        if (a.status == TaskStatus.done && b.status != TaskStatus.done) return 1;
-        if (a.status != TaskStatus.done && b.status == TaskStatus.done) return -1;
-      }
-
-      if (a.status == TaskStatus.done && b.status != TaskStatus.done) return 1;
-      if (a.status != TaskStatus.done && b.status == TaskStatus.done) return -1;
-
-      if (a.isOverdue && !b.isOverdue) return -1;
-      if (!a.isOverdue && b.isOverdue) return 1;
-
-      if (a.isUpcoming && !b.isUpcoming) return -1;
-      if (!a.isUpcoming && b.isUpcoming) return 1;
-
-      return a.dueDate.compareTo(b.dueDate);
-    });
-    return sorted;
-  }
-
-  TaskDomain? getDomainById(String id) {
+  TaskTemplate? getTemplateById(String id) {
     try {
-      return _domains.firstWhere((d) => d.id == id);
+      return _templates.firstWhere((t) => t.id == id);
     } catch (_) {
       return null;
     }
@@ -242,55 +81,27 @@ class TaskService {
     }
   }
 
-  void updateInstance(TaskInstance instance) {
-    final index = _instances.indexWhere((i) => i.id == instance.id);
-    if (index >= 0) {
-      _instances[index] = instance;
-    }
-  }
+  List<TaskInstance> getActiveInstances() =>
+      _instances.where((i) => i.status != TaskStatus.done).toList();
 
-  void markAsDone(String instanceId) {
-    final instance = getInstanceById(instanceId);
-    if (instance != null && instance.status != TaskStatus.done) {
-      instance.markAsDone();
-      updateInstance(instance);
+  List<TaskInstance> getArchivedInstances() =>
+      _instances.where((i) => i.status == TaskStatus.done).toList();
 
-      final template = _templates.firstWhere((t) => t.id == instance.templateId);
-      if (template.recurrence.isRecurring) {
-        final newStartDate = template.recurrence.nextDate(instance.startDate);
-        final newDueDate = template.recurrence.nextDate(instance.dueDate);
-        final nextInstance = TaskInstance(
-          id: 'instance-${template.id}-${newDueDate.toIso8601String()}',
-          templateId: template.id,
-          domainId: template.domainId,
-          title: template.title,
-          description: template.description,
-          startDate: newStartDate,
-          dueDate: newDueDate,
-          createdAt: DateTime.now(),
-        );
-        _instances.add(nextInstance);
-      }
-    }
-  }
+  // --- Write (async, calls API then updates local cache) ---
 
-  void addLogEntry(String instanceId, String user, String text) {
+  Future<void> markAsDone(String instanceId) async {
+    await ApiService.markAsDone(instanceId);
+
     final instance = getInstanceById(instanceId);
     if (instance != null) {
-      instance.addLogEntry(TaskLogEntry(
-        id: const Uuid().v4(),
-        user: user,
-        timestamp: DateTime.now(),
-        text: text,
-      ));
-      updateInstance(instance);
+      instance.markAsDone();
+      // The backend creates the next recurring instance automatically.
+      // It will appear in the list after the next refresh / app restart.
     }
   }
 
-  void reset() {
-    _domains.clear();
-    _templates.clear();
-    _instances.clear();
-    _initializeMockData();
+  Future<void> addLogEntry(String instanceId, String user, String text) async {
+    final entry = await ApiService.addLogEntry(instanceId, user, text);
+    getInstanceById(instanceId)?.addLogEntry(entry);
   }
 }

@@ -11,6 +11,14 @@ class TaskDomain {
     required this.description,
   });
 
+  factory TaskDomain.fromJson(Map<String, dynamic> json) {
+    return TaskDomain(
+      id: json['id'] as String,
+      name: json['name'] as String,
+      description: json['description'] as String? ?? '',
+    );
+  }
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||

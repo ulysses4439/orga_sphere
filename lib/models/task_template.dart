@@ -30,6 +30,25 @@ class TaskTemplate {
     required this.createdAt,
   }) : assert(startDate.isBefore(dueDate) || startDate.isAtSameMomentAs(dueDate));
 
+  factory TaskTemplate.fromJson(Map<String, dynamic> json) {
+    return TaskTemplate(
+      id: json['id'] as String,
+      domainId: json['domainId'] as String,
+      title: json['title'] as String,
+      description: json['description'] as String? ?? '',
+      startDate: DateTime.parse(json['startDate'] as String),
+      dueDate: DateTime.parse(json['dueDate'] as String),
+      recurrence: RecurrencePattern(
+        frequency: RecurrenceFrequency.values.firstWhere(
+          (f) => f.name == (json['recurrenceFrequency'] as String? ?? 'none'),
+          orElse: () => RecurrenceFrequency.none,
+        ),
+        interval: (json['recurrenceInterval'] as int?) ?? 1,
+      ),
+      createdAt: DateTime.parse(json['createdAt'] as String),
+    );
+  }
+
   bool get isOneTime => recurrence.frequency == RecurrenceFrequency.none;
 
   /// Create a copy with modified fields.
