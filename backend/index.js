@@ -24,11 +24,17 @@ const config = {
 let pool;
 
 async function getPool() {
-  if (!pool) {
+  if (!pool || !pool.connected) {
     pool = await sql.connect(config);
   }
   return pool;
 }
+
+// Warmup connection at startup so first user request doesn't pay the cold-start cost
+sql.connect(config)
+  .then(p => { pool = p; console.log('DB connection ready'); })
+  .catch(err => console.error('Startup DB connect failed (will retry on first request):', err.message));
+
 
 function nextDate(current, frequency, interval) {
   const d = new Date(current);
@@ -43,6 +49,16 @@ function nextDate(current, frequency, interval) {
 
 app.get('/', (req, res) => {
   res.send('OrgaSphere API');
+});
+
+app.get('/health', async (req, res) => {
+  try {
+    const p = await getPool();
+    await p.request().query('SELECT 1');
+    res.json({ status: 'ok', db: 'connected' });
+  } catch (err) {
+    res.status(503).json({ status: 'error', db: err.message });
+  }
 });
 
 // --- Domains ---
