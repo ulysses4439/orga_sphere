@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/task_service.dart';
+import '../theme/app_colors.dart';
 
 class TaskListScreen extends StatefulWidget {
   const TaskListScreen({super.key});
@@ -19,8 +20,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
       child: Scaffold(
         appBar: AppBar(
           title: const Text('OrgaSphere'),
-          elevation: 0,
-          backgroundColor: Colors.deepPurple,
           bottom: const TabBar(
             tabs: [
               Tab(text: 'Aktiv'),
@@ -70,13 +69,48 @@ class _TaskListScreenState extends State<TaskListScreen> {
           },
         ),
         floatingActionButton: FloatingActionButton(
-          onPressed: () {
-            ScaffoldMessenger.of(context).showSnackBar(
-              const SnackBar(content: Text('Neue Aufgabe hinzufügen (kommt bald)')),
-            );
-          },
-          backgroundColor: Colors.deepPurple,
+          onPressed: _showCreateMenu,
           child: const Icon(Icons.add),
+        ),
+      ),
+    );
+  }
+
+  void _showCreateMenu() {
+    showModalBottomSheet<void>(
+      context: context,
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.folder_outlined),
+              title: const Text('Bereich anlegen'),
+              onTap: () async {
+                Navigator.of(ctx).pop();
+                await Navigator.of(context).pushNamed('/create-domain');
+                setState(() {});
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.assignment_outlined),
+              title: const Text('Vorlage anlegen'),
+              onTap: () async {
+                Navigator.of(ctx).pop();
+                await Navigator.of(context).pushNamed('/create-template');
+                setState(() {});
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.add_task),
+              title: const Text('Aufgabe anlegen'),
+              onTap: () async {
+                Navigator.of(ctx).pop();
+                await Navigator.of(context).pushNamed('/create-instance');
+                setState(() {});
+              },
+            ),
+          ],
         ),
       ),
     );
@@ -212,7 +246,7 @@ class _TaskListItem extends StatelessWidget {
   Color _statusBackgroundColor(TaskStatus status) {
     switch (status) {
       case TaskStatus.open:       return Colors.grey;
-      case TaskStatus.inProgress: return Colors.blue;
+      case TaskStatus.inProgress: return AppColors.teal;
       case TaskStatus.done:       return Colors.green;
     }
   }

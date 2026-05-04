@@ -51,6 +51,66 @@ class ApiService {
     return TaskLogEntry.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
+  static Future<TaskDomain> createDomain(String name, String description) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/domains'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'name': name, 'description': description}),
+    );
+    _checkStatus(response);
+    return TaskDomain.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  static Future<TaskTemplate> createTemplate({
+    required String domainId,
+    required String title,
+    required String description,
+    required DateTime startDate,
+    required DateTime dueDate,
+    required String recurrenceFrequency,
+    required int recurrenceInterval,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/templates'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'domainId': domainId,
+        'title': title,
+        'description': description,
+        'startDate': startDate.toIso8601String(),
+        'dueDate': dueDate.toIso8601String(),
+        'recurrenceFrequency': recurrenceFrequency,
+        'recurrenceInterval': recurrenceInterval,
+      }),
+    );
+    _checkStatus(response);
+    return TaskTemplate.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  static Future<TaskInstance> createInstance({
+    required String templateId,
+    required String domainId,
+    required String title,
+    required String description,
+    required DateTime startDate,
+    required DateTime dueDate,
+  }) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/instances'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({
+        'templateId': templateId,
+        'domainId': domainId,
+        'title': title,
+        'description': description,
+        'startDate': startDate.toIso8601String(),
+        'dueDate': dueDate.toIso8601String(),
+      }),
+    );
+    _checkStatus(response);
+    return TaskInstance.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
   static Future<void> markAsDone(String instanceId) async {
     final response = await http.patch(
       Uri.parse('$_baseUrl/instances/$instanceId/done'),

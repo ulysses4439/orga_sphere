@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'screens/screens.dart';
+import 'theme/app_theme.dart';
 
 void main() {
   runApp(const OrgaSphereApp());
@@ -14,14 +15,7 @@ class OrgaSphereApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'OrgaSphere',
-      theme: ThemeData(
-        // Use a clean purple theme
-        colorScheme: ColorScheme.fromSeed(
-          seedColor: Colors.deepPurple,
-          brightness: Brightness.light,
-        ),
-        useMaterial3: true,
-      ),
+      theme: AppTheme.light,
       // Named routes for navigation
       onGenerateRoute: (settings) {
         switch (settings.name) {
@@ -33,6 +27,18 @@ class OrgaSphereApp extends StatelessWidget {
             final taskId = settings.arguments as String;
             return MaterialPageRoute(
               builder: (_) => TaskDetailScreen(taskId: taskId),
+            );
+          case '/create-domain':
+            return MaterialPageRoute(
+              builder: (_) => const CreateDomainScreen(),
+            );
+          case '/create-template':
+            return MaterialPageRoute(
+              builder: (_) => const CreateTemplateScreen(),
+            );
+          case '/create-instance':
+            return MaterialPageRoute(
+              builder: (_) => const CreateInstanceScreen(),
             );
           default:
             return MaterialPageRoute(

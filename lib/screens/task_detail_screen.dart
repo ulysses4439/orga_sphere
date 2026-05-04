@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/task_service.dart';
+import '../theme/app_colors.dart';
 
 class TaskDetailScreen extends StatefulWidget {
   final String taskId;
@@ -128,7 +129,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Aufgabendetails'),
-        backgroundColor: Colors.deepPurple,
       ),
       body: Stack(
         children: [
@@ -138,7 +138,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
               children: [
                 Container(
                   padding: const EdgeInsets.all(16),
-                  color: const Color.fromRGBO(94, 53, 177, 0.1),
+                  color: AppColors.navyPale,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -251,7 +251,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
         Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            border: Border.all(color: Colors.grey[300]!),
+            border: Border.all(color: AppColors.lightGrey),
             borderRadius: BorderRadius.circular(8),
           ),
           child: Text(content),
@@ -288,11 +288,11 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                       height: 12,
                       decoration: BoxDecoration(
                         shape: BoxShape.circle,
-                        color: Colors.deepPurple,
-                        border: Border.all(color: Colors.white, width: 2),
+                        color: AppColors.teal,
+                        border: Border.all(color: AppColors.appWhite, width: 2),
                       ),
                     ),
-                    if (!isLast) Container(width: 2, height: 60, color: Colors.grey[300]),
+                    if (!isLast) Container(width: 2, height: 60, color: AppColors.lightGrey),
                   ],
                 ),
                 const SizedBox(width: 16),
@@ -363,8 +363,6 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 icon: const Icon(Icons.add),
                 label: const Text('Eintrag hinzufügen'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.deepPurple,
-                  foregroundColor: Colors.white,
                   padding: const EdgeInsets.symmetric(vertical: 12),
                 ),
               ),
@@ -378,7 +376,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   Color _statusColor(TaskStatus status) {
     switch (status) {
       case TaskStatus.open:       return Colors.grey;
-      case TaskStatus.inProgress: return Colors.blue;
+      case TaskStatus.inProgress: return AppColors.teal;
       case TaskStatus.done:       return Colors.green;
     }
   }

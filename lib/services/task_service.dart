@@ -104,4 +104,51 @@ class TaskService {
     final entry = await ApiService.addLogEntry(instanceId, user, text);
     getInstanceById(instanceId)?.addLogEntry(entry);
   }
+
+  Future<TaskDomain> createDomain(String name, String description) async {
+    final domain = await ApiService.createDomain(name, description);
+    _domains.add(domain);
+    return domain;
+  }
+
+  Future<TaskTemplate> createTemplate({
+    required String domainId,
+    required String title,
+    required String description,
+    required DateTime startDate,
+    required DateTime dueDate,
+    required RecurrencePattern recurrence,
+  }) async {
+    final template = await ApiService.createTemplate(
+      domainId: domainId,
+      title: title,
+      description: description,
+      startDate: startDate,
+      dueDate: dueDate,
+      recurrenceFrequency: recurrence.frequency.name,
+      recurrenceInterval: recurrence.interval,
+    );
+    _templates.add(template);
+    return template;
+  }
+
+  Future<TaskInstance> createInstance({
+    required String templateId,
+    required String domainId,
+    required String title,
+    required String description,
+    required DateTime startDate,
+    required DateTime dueDate,
+  }) async {
+    final instance = await ApiService.createInstance(
+      templateId: templateId,
+      domainId: domainId,
+      title: title,
+      description: description,
+      startDate: startDate,
+      dueDate: dueDate,
+    );
+    _instances.add(instance);
+    return instance;
+  }
 }
