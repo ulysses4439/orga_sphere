@@ -64,10 +64,12 @@ class TaskService {
   }
 
   List<Task> getActiveTasks() =>
-      _tasks.where((t) => t.status != TaskStatus.done).toList();
+      (_tasks.where((t) => t.status != TaskStatus.done).toList()
+        ..sort((a, b) => a.dueDate.compareTo(b.dueDate)));
 
   List<Task> getArchivedTasks() =>
-      _tasks.where((t) => t.status == TaskStatus.done).toList();
+      (_tasks.where((t) => t.status == TaskStatus.done).toList()
+        ..sort((a, b) => (b.completedAt ?? b.dueDate).compareTo(a.completedAt ?? a.dueDate)));
 
   Future<Task> createTask({
     required String domainId,
@@ -120,8 +122,8 @@ class TaskService {
     getTaskById(taskId)?.addLogEntry(entry);
   }
 
-  Future<TaskDomain> createDomain(String name, String description) async {
-    final domain = await ApiService.createDomain(name, description);
+  Future<TaskDomain> createDomain(String name, String description, String color) async {
+    final domain = await ApiService.createDomain(name, description, color);
     _domains.add(domain);
     return domain;
   }

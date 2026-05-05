@@ -80,11 +80,11 @@ class ApiService {
     _checkStatus(response);
   }
 
-  static Future<TaskDomain> createDomain(String name, String description) async {
+  static Future<TaskDomain> createDomain(String name, String description, String color) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/domains'),
       headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'name': name, 'description': description}),
+      body: jsonEncode({'name': name, 'description': description, 'color': color}),
     );
     _checkStatus(response);
     return TaskDomain.fromJson(jsonDecode(response.body) as Map<String, dynamic>);

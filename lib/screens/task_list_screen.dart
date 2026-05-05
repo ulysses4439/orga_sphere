@@ -128,9 +128,11 @@ class _TaskListScreenState extends State<TaskListScreen> {
         final task = tasks[index];
         final domainName = _taskService.getDomainById(task.domainId)?.name ?? 'Allgemein';
 
+        final domain = _taskService.getDomainById(task.domainId);
         return _TaskListItem(
           task: task,
           domainName: domainName,
+          domainColor: domain?.color,
           onTap: () async {
             await Navigator.of(context).pushNamed('/task-detail', arguments: task.id);
             setState(() {});
@@ -144,11 +146,13 @@ class _TaskListScreenState extends State<TaskListScreen> {
 class _TaskListItem extends StatelessWidget {
   final Task task;
   final String domainName;
+  final Color? domainColor;
   final VoidCallback onTap;
 
   const _TaskListItem({
     required this.task,
     required this.domainName,
+    this.domainColor,
     required this.onTap,
   });
 
@@ -174,6 +178,7 @@ class _TaskListItem extends StatelessWidget {
 
     return Card(
       margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 0),
+      color: domainColor,
       child: ListTile(
         onTap: onTap,
         leading: Icon(statusIcon, color: statusColor),

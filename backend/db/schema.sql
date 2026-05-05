@@ -2,7 +2,8 @@
 CREATE TABLE TaskDomain (
     id NVARCHAR(100) PRIMARY KEY,
     name NVARCHAR(100) NOT NULL,
-    description NVARCHAR(500)
+    description NVARCHAR(500),
+    color NVARCHAR(7) NOT NULL DEFAULT '#F5F5F5'
 );
 
 -- Task table (unified: replaces TaskTemplate + TaskInstance)

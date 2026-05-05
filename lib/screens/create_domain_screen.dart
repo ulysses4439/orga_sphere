@@ -1,6 +1,24 @@
 import 'package:flutter/material.dart';
 import '../services/task_service.dart';
 
+const _kPaletteColors = [
+  '#FFC0CB', // Rosa
+  '#FFB6C1', // Hellrosa
+  '#FFDAB9', // Pfirsich
+  '#FFE4B5', // Maisgelb
+  '#FFFACD', // Zitrone
+  '#C1FFC1', // Hellgrün
+  '#98FB98', // Blassgrün
+  '#E0FFFF', // Hellcyan
+  '#AFEEEE', // Türkis
+  '#B0E0E6', // Puderblau
+  '#E6E6FA', // Lavendel
+  '#DDA0DD', // Pflaume
+  '#F5F5DC', // Beige
+  '#D3D3D3', // Hellgrau
+  '#F5F5F5', // Weiß
+];
+
 class CreateDomainScreen extends StatefulWidget {
   const CreateDomainScreen({super.key});
 
@@ -12,6 +30,7 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
+  String _selectedColor = '#E6E6FA';
   bool _saving = false;
 
   @override
@@ -28,6 +47,7 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
       await TaskService().createDomain(
         _nameController.text.trim(),
         _descController.text.trim(),
+        _selectedColor,
       );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
@@ -40,12 +60,15 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
     }
   }
 
+  Color _hexToColor(String hex) {
+    final clean = hex.replaceAll('#', '');
+    return Color(int.parse('0xFF$clean'));
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Bereich anlegen'),
-      ),
+      appBar: AppBar(title: const Text('Bereich anlegen')),
       body: _saving
           ? const Center(child: CircularProgressIndicator())
           : Form(
@@ -73,6 +96,65 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
                     ),
                     textCapitalization: TextCapitalization.sentences,
                     maxLines: 3,
+                  ),
+                  const SizedBox(height: 16),
+                  InputDecorator(
+                    decoration: const InputDecoration(
+                      labelText: 'Farbe',
+                      border: OutlineInputBorder(),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 10,
+                          runSpacing: 10,
+                          children: _kPaletteColors.map((hex) {
+                            final isSelected = hex == _selectedColor;
+                            return GestureDetector(
+                              onTap: () => setState(() => _selectedColor = hex),
+                              child: Container(
+                                width: 36,
+                                height: 36,
+                                decoration: BoxDecoration(
+                                  color: _hexToColor(hex),
+                                  shape: BoxShape.circle,
+                                  border: Border.all(
+                                    color: isSelected
+                                        ? Theme.of(context).colorScheme.primary
+                                        : Colors.grey.shade400,
+                                    width: isSelected ? 3 : 1,
+                                  ),
+                                ),
+                                child: isSelected
+                                    ? const Icon(Icons.check, size: 18, color: Colors.black54)
+                                    : null,
+                              ),
+                            );
+                          }).toList(),
+                        ),
+                        const SizedBox(height: 8),
+                        Row(
+                          children: [
+                            Container(
+                              width: 24,
+                              height: 24,
+                              decoration: BoxDecoration(
+                                color: _hexToColor(_selectedColor),
+                                shape: BoxShape.circle,
+                                border: Border.all(color: Colors.grey.shade400),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              _selectedColor.toUpperCase(),
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                   const SizedBox(height: 24),
                   FilledButton(

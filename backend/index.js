@@ -111,7 +111,7 @@ app.get('/domains', async (req, res) => {
 });
 
 app.post('/domains', async (req, res) => {
-  const { name, description } = req.body;
+  const { name, description, color } = req.body;
   const id = uuidv4();
   try {
     const p = await getPool();
@@ -119,7 +119,8 @@ app.post('/domains', async (req, res) => {
       .input('id',          sql.NVarChar, id)
       .input('name',        sql.NVarChar, name)
       .input('description', sql.NVarChar, description)
-      .query('INSERT INTO TaskDomain (id, name, description) OUTPUT INSERTED.* VALUES (@id, @name, @description)');
+      .input('color',       sql.NVarChar, color || '#F5F5F5')
+      .query('INSERT INTO TaskDomain (id, name, description, color) OUTPUT INSERTED.* VALUES (@id, @name, @description, @color)');
     res.json(result.recordset[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
