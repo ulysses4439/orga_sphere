@@ -117,9 +117,23 @@ class TaskService {
     _tasks.removeWhere((t) => t.id == taskId);
   }
 
+  Future<void> startTask(String taskId) async {
+    await ApiService.startTask(taskId);
+    final task = getTaskById(taskId);
+    if (task != null) task.status = TaskStatus.inProgress;
+  }
+
   Future<void> addLogEntry(String taskId, String user, String text) async {
-    final entry = await ApiService.addLogEntry(taskId, user, text);
-    getTaskById(taskId)?.addLogEntry(entry);
+    final result = await ApiService.addLogEntry(taskId, user, text);
+    final task = getTaskById(taskId);
+    task?.addLogEntry(result.entry);
+    if (result.newTaskStatus != null) {
+      final newStatus = TaskStatus.values.firstWhere(
+        (s) => s.name == result.newTaskStatus,
+        orElse: () => task?.status ?? TaskStatus.open,
+      );
+      task?.status = newStatus;
+    }
   }
 
   Future<TaskDomain> createDomain(String name, String description, String color) async {

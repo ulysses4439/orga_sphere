@@ -162,18 +162,19 @@ class _TaskListItem extends StatelessWidget {
     final isOverdue = task.isOverdue;
     final isUpcoming = task.isUpcoming;
 
-    Color statusColor = Colors.grey;
-    IconData statusIcon = Icons.radio_button_unchecked;
+    late Color statusColor;
+    late IconData statusIcon;
 
     if (task.status == TaskStatus.done) {
       statusColor = Colors.green;
       statusIcon = Icons.check_circle;
-    } else if (isOverdue) {
-      statusColor = Colors.red;
-      statusIcon = Icons.error_outline;
-    } else if (isUpcoming) {
-      statusColor = Colors.orange;
-      statusIcon = Icons.warning_amber;
+    } else if (task.status == TaskStatus.inProgress) {
+      statusIcon = Icons.timelapse;
+      statusColor = isOverdue ? Colors.red : isUpcoming ? Colors.orange : AppColors.teal;
+    } else {
+      // open
+      statusIcon = isOverdue ? Icons.error_outline : isUpcoming ? Icons.warning_amber : Icons.radio_button_unchecked;
+      statusColor = isOverdue ? Colors.red : isUpcoming ? Colors.orange : Colors.grey;
     }
 
     return Card(

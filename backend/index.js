@@ -206,6 +206,23 @@ app.patch('/tasks/:id/done', async (req, res) => {
   }
 });
 
+// Set task to inProgress
+app.patch('/tasks/:id/start', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const p = await getPool();
+    const result = await p.request()
+      .input('id', sql.NVarChar, id)
+      .query("UPDATE Task SET status = 'inProgress' WHERE id = @id AND status = 'open'");
+    if (result.rowsAffected[0] === 0) {
+      return res.status(404).json({ error: 'Task not found or not open' });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Reopen a completed task (undo done)
 app.patch('/tasks/:id/reopen', async (req, res) => {
   const { id } = req.params;
@@ -294,7 +311,14 @@ app.post('/logs', async (req, res) => {
       .query(`INSERT INTO TaskLogEntry (id, taskId, [user], [text], timestamp)
               OUTPUT INSERTED.*
               VALUES (@id, @taskId, @user, @text, @timestamp)`);
-    res.json(result.recordset[0]);
+
+    // Auto-set to inProgress on first log entry
+    const update = await p.request()
+      .input('taskId', sql.NVarChar, taskId)
+      .query("UPDATE Task SET status = 'inProgress' WHERE id = @taskId AND status = 'open'");
+    const taskStatus = update.rowsAffected[0] > 0 ? 'inProgress' : null;
+
+    res.json({ ...result.recordset[0], taskStatus });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

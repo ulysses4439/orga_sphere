@@ -65,6 +65,43 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     }
   }
 
+  void _startTask() {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('In Bearbeitung setzen?'),
+        content: const Text('Die Sphere wird als "In Bearbeitung" markiert.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              setState(() => _isBusy = true);
+              try {
+                await _taskService.startTask(widget.taskId);
+                if (!mounted) return;
+                setState(() {
+                  _task = _taskService.getTaskById(widget.taskId);
+                  _isBusy = false;
+                });
+              } catch (e) {
+                if (!mounted) return;
+                setState(() => _isBusy = false);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Fehler: $e')),
+                );
+              }
+            },
+            child: const Text('In Bearbeitung'),
+          ),
+        ],
+      ),
+    );
+  }
+
   void _markAsDone() {
     final task = _task;
     if (task == null) return;
@@ -284,7 +321,35 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                         ),
                       ],
                       const SizedBox(height: 24),
-                      if (!isDone)
+                      if (task.status == TaskStatus.open) ...[
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: _isBusy ? null : _startTask,
+                                icon: const Icon(Icons.timelapse),
+                                label: const Text('In Bearbeitung'),
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: FilledButton.icon(
+                                onPressed: _isBusy ? null : _markAsDone,
+                                icon: const Icon(Icons.check_circle_outline),
+                                label: const Text('Erledigt'),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: Colors.green,
+                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                      if (task.status == TaskStatus.inProgress)
                         SizedBox(
                           width: double.infinity,
                           child: FilledButton.icon(

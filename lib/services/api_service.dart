@@ -64,6 +64,14 @@ class ApiService {
     return next != null ? Task.fromJson(next as Map<String, dynamic>) : null;
   }
 
+  static Future<void> startTask(String taskId) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/tasks/$taskId/start'),
+      headers: {'Content-Type': 'application/json'},
+    );
+    _checkStatus(response);
+  }
+
   static Future<void> reopenTask(String taskId) async {
     final response = await http.patch(
       Uri.parse('$_baseUrl/tasks/$taskId/reopen'),
@@ -97,14 +105,20 @@ class ApiService {
     return data.map((j) => TaskLogEntry.fromJson(j as Map<String, dynamic>)).toList();
   }
 
-  static Future<TaskLogEntry> addLogEntry(String taskId, String user, String text) async {
+  /// Returns the new log entry and optionally the new task status if it changed.
+  static Future<({TaskLogEntry entry, String? newTaskStatus})> addLogEntry(
+      String taskId, String user, String text) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/logs'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'taskId': taskId, 'user': user, 'text': text}),
     );
     _checkStatus(response);
-    return TaskLogEntry.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return (
+      entry: TaskLogEntry.fromJson(body),
+      newTaskStatus: body['taskStatus'] as String?,
+    );
   }
 
   static void _checkStatus(http.Response response) {
