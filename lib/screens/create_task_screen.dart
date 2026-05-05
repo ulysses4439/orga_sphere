@@ -90,7 +90,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
     final domains = _taskService.getDomains();
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Aufgabe anlegen')),
+      appBar: AppBar(title: const Text('Sphere anlegen')),
       body: _saving
           ? const Center(child: CircularProgressIndicator())
           : Form(

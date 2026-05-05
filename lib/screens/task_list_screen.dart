@@ -58,11 +58,11 @@ class _TaskListScreenState extends State<TaskListScreen> {
               children: [
                 _buildTaskList(
                   _taskService.getActiveTasks(),
-                  'Keine aktiven Aufgaben vorhanden',
+                  'Keine aktiven Spheres vorhanden',
                 ),
                 _buildTaskList(
                   _taskService.getArchivedTasks(),
-                  'Keine archivierten Aufgaben vorhanden',
+                  'Keine archivierten Spheres vorhanden',
                 ),
               ],
             );
@@ -94,7 +94,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
             ),
             ListTile(
               leading: const Icon(Icons.add_task),
-              title: const Text('Aufgabe anlegen'),
+              title: const Text('Sphere anlegen'),
               onTap: () async {
                 Navigator.of(ctx).pop();
                 await Navigator.of(context).pushNamed('/create-task');

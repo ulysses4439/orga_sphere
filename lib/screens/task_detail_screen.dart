@@ -70,13 +70,13 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     if (task == null) return;
 
     final confirmationText = task.isRecurring
-        ? 'Aufgabe wird als erledigt markiert. Die nächste Sphere wird automatisch angelegt.'
-        : 'Aufgabe wird als erledigt markiert und ins Archiv verschoben.';
+        ? 'Sphere wird als erledigt markiert. Die nächste Sphere wird automatisch angelegt.'
+        : 'Die Sphere wird als erledigt markiert und ins Archiv verschoben.';
 
     showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Aufgabe erledigt?'),
+        title: const Text('Sphere erledigt?'),
         content: Text(confirmationText),
         actions: [
           TextButton(
@@ -95,7 +95,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   _isBusy = false;
                 });
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Aufgabe erledigt')),
+                  const SnackBar(content: Text('Sphere erledigt')),
                 );
               } catch (e) {
                 if (!mounted) return;
@@ -118,7 +118,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       builder: (dialogContext) => AlertDialog(
         title: const Text('Abschluss rückgängig machen?'),
         content: const Text(
-          'Die Aufgabe wird wieder als aktiv markiert. Eine bereits angelegte Folge-Sphere bleibt erhalten.',
+          'Die Sphere wird wieder als aktiv markiert. Eine bereits angelegte Folge-Sphere bleibt erhalten.',
         ),
         actions: [
           TextButton(
@@ -137,7 +137,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   _isBusy = false;
                 });
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Aufgabe wieder geöffnet')),
+                  const SnackBar(content: Text('Sphere wieder geöffnet')),
                 );
               } catch (e) {
                 if (!mounted) return;
@@ -158,9 +158,9 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Aufgabe löschen?'),
+        title: const Text('Sphere löschen?'),
         content: const Text(
-          'Die Aufgabe und alle zugehörigen Einträge werden dauerhaft gelöscht. Dies kann nicht rückgängig gemacht werden.',
+          'Diese Sphere und alle zugehörigen Einträge werden dauerhaft gelöscht. Dies kann nicht rückgängig gemacht werden.',
         ),
         actions: [
           TextButton(
@@ -195,8 +195,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   Widget build(BuildContext context) {
     if (_task == null) {
       return Scaffold(
-        appBar: AppBar(title: const Text('Aufgabe nicht gefunden')),
-        body: const Center(child: Text('Diese Aufgabe konnte nicht gefunden werden')),
+        appBar: AppBar(title: const Text('Sphere nicht gefunden')),
+        body: const Center(child: Text('Diese Sphere konnte nicht gefunden werden')),
       );
     }
 
@@ -205,13 +205,15 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     final domain = _taskService.getDomainById(task.domainId);
     final isDone = task.status == TaskStatus.done;
 
-    return Scaffold(
+    return PopScope(
+      canPop: !_isBusy,
+      child: Scaffold(
       appBar: AppBar(
-        title: const Text('Aufgabendetails'),
+        title: const Text('Sphere'),
         actions: [
           IconButton(
             icon: const Icon(Icons.delete_outline),
-            tooltip: 'Aufgabe löschen',
+            tooltip: 'Sphere löschen',
             onPressed: _isBusy ? null : _deleteTask,
           ),
         ],
@@ -350,6 +352,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
             ),
         ],
       ),
+      ), // PopScope
     );
   }
 
