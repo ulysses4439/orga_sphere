@@ -205,6 +205,57 @@ app.patch('/tasks/:id/done', async (req, res) => {
   }
 });
 
+// Reopen a completed task (undo done)
+app.patch('/tasks/:id/reopen', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const p = await getPool();
+    const taskResult = await p.request()
+      .input('id', sql.NVarChar, id)
+      .query('SELECT * FROM Task WHERE id = @id');
+
+    if (taskResult.recordset.length === 0) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    await p.request()
+      .input('id', sql.NVarChar, id)
+      .query("UPDATE Task SET status = 'open', completedAt = NULL WHERE id = @id");
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Delete a task and its log entries
+app.delete('/tasks/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const p = await getPool();
+
+    const taskResult = await p.request()
+      .input('id', sql.NVarChar, id)
+      .query('SELECT id FROM Task WHERE id = @id');
+
+    if (taskResult.recordset.length === 0) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+
+    await p.request()
+      .input('id', sql.NVarChar, id)
+      .query('DELETE FROM TaskLogEntry WHERE taskId = @id');
+
+    await p.request()
+      .input('id', sql.NVarChar, id)
+      .query('DELETE FROM Task WHERE id = @id');
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // -----------------------------------------------------------------------
 // Logs
 // -----------------------------------------------------------------------

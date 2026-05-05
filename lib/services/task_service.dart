@@ -98,6 +98,20 @@ class TaskService {
     }
   }
 
+  Future<void> reopenTask(String taskId) async {
+    await ApiService.reopenTask(taskId);
+    final task = getTaskById(taskId);
+    if (task != null) {
+      task.status = TaskStatus.open;
+      task.completedAt = null;
+    }
+  }
+
+  Future<void> deleteTask(String taskId) async {
+    await ApiService.deleteTask(taskId);
+    _tasks.removeWhere((t) => t.id == taskId);
+  }
+
   Future<void> addLogEntry(String taskId, String user, String text) async {
     final entry = await ApiService.addLogEntry(taskId, user, text);
     getTaskById(taskId)?.addLogEntry(entry);

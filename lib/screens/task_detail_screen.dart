@@ -70,7 +70,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     if (task == null) return;
 
     final confirmationText = task.isRecurring
-        ? 'Aufgabe wird als erledigt markiert. Da es eine Wiederholungsaufgabe ist, wird automatisch die nächste Kapsel angelegt.'
+        ? 'Aufgabe wird als erledigt markiert. Die nächste Sphere wird automatisch angelegt.'
         : 'Aufgabe wird als erledigt markiert und ins Archiv verschoben.';
 
     showDialog(
@@ -112,6 +112,85 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     );
   }
 
+  void _reopenTask() {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Abschluss rückgängig machen?'),
+        content: const Text(
+          'Die Aufgabe wird wieder als aktiv markiert. Eine bereits angelegte Folge-Sphere bleibt erhalten.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              setState(() => _isBusy = true);
+              try {
+                await _taskService.reopenTask(widget.taskId);
+                if (!mounted) return;
+                setState(() {
+                  _task = _taskService.getTaskById(widget.taskId);
+                  _isBusy = false;
+                });
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Aufgabe wieder geöffnet')),
+                );
+              } catch (e) {
+                if (!mounted) return;
+                setState(() => _isBusy = false);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Fehler: $e')),
+                );
+              }
+            },
+            child: const Text('Ja, wieder öffnen'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _deleteTask() {
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Aufgabe löschen?'),
+        content: const Text(
+          'Die Aufgabe und alle zugehörigen Einträge werden dauerhaft gelöscht. Dies kann nicht rückgängig gemacht werden.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Abbrechen'),
+          ),
+          FilledButton(
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              setState(() => _isBusy = true);
+              try {
+                await _taskService.deleteTask(widget.taskId);
+                if (!mounted) return;
+                Navigator.of(context).pop();
+              } catch (e) {
+                if (!mounted) return;
+                setState(() => _isBusy = false);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  SnackBar(content: Text('Fehler: $e')),
+                );
+              }
+            },
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            child: const Text('Löschen'),
+          ),
+        ],
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     if (_task == null) {
@@ -129,6 +208,13 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('Aufgabendetails'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            tooltip: 'Aufgabe löschen',
+            onPressed: _isBusy ? null : _deleteTask,
+          ),
+        ],
       ),
       body: Stack(
         children: [
@@ -195,8 +281,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                           '${task.completedAt!.day}. ${_monthName(task.completedAt!.month)} ${task.completedAt!.year}',
                         ),
                       ],
-                      if (!isDone) ...[
-                        const SizedBox(height: 24),
+                      const SizedBox(height: 24),
+                      if (!isDone)
                         SizedBox(
                           width: double.infinity,
                           child: FilledButton.icon(
@@ -209,7 +295,18 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                             ),
                           ),
                         ),
-                      ],
+                      if (isDone)
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: _isBusy ? null : _reopenTask,
+                            icon: const Icon(Icons.undo),
+                            label: const Text('Abschluss rückgängig'),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),

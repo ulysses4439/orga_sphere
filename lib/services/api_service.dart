@@ -61,6 +61,22 @@ class ApiService {
     _checkStatus(response);
   }
 
+  static Future<void> reopenTask(String taskId) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/tasks/$taskId/reopen'),
+      headers: {'Content-Type': 'application/json'},
+    );
+    _checkStatus(response);
+  }
+
+  static Future<void> deleteTask(String taskId) async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/tasks/$taskId'),
+      headers: {'Content-Type': 'application/json'},
+    );
+    _checkStatus(response);
+  }
+
   static Future<TaskDomain> createDomain(String name, String description) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/domains'),
