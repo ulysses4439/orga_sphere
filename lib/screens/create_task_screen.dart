@@ -101,14 +101,14 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                   DropdownButtonFormField<String>(
                     initialValue: _selectedDomainId,
                     decoration: const InputDecoration(
-                      labelText: 'Bereich *',
+                      labelText: 'Orbit *',
                       border: OutlineInputBorder(),
                     ),
                     items: domains
                         .map((d) => DropdownMenuItem(value: d.id, child: Text(d.name)))
                         .toList(),
                     onChanged: (v) => setState(() => _selectedDomainId = v),
-                    validator: (v) => v == null ? 'Bereich ist erforderlich' : null,
+                    validator: (v) => v == null ? 'Orbit ist erforderlich' : null,
                   ),
                   const SizedBox(height: 16),
                   TextFormField(

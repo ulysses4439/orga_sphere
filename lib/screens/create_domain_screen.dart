@@ -68,7 +68,7 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Bereich anlegen')),
+      appBar: AppBar(title: const Text('Orbit anlegen')),
       body: _saving
           ? const Center(child: CircularProgressIndicator())
           : Form(

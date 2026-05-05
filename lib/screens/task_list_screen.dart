@@ -85,7 +85,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
           children: [
             ListTile(
               leading: const Icon(Icons.folder_outlined),
-              title: const Text('Bereich anlegen'),
+              title: const Text('Orbit anlegen'),
               onTap: () async {
                 Navigator.of(ctx).pop();
                 await Navigator.of(context).pushNamed('/create-domain');
@@ -187,7 +187,7 @@ class _TaskListItem extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 4),
-            Text('Bereich: $domainName', style: Theme.of(context).textTheme.bodySmall),
+            Text('Orbit: $domainName', style: Theme.of(context).textTheme.bodySmall),
             const SizedBox(height: 4),
             Text(
               'Fällig: ${dueDate.day}. ${_monthName(dueDate.month)} ${dueDate.year}',

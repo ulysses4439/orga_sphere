@@ -263,7 +263,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                     children: [
                       _buildInfoSection('Beschreibung', task.description),
                       const SizedBox(height: 16),
-                      _buildInfoRow('Bereich', domain?.name ?? 'Allgemein'),
+                      _buildInfoRow('Orbit', domain?.name ?? 'Allgemein'),
                       const SizedBox(height: 8),
                       _buildInfoRow('Wiederholung', task.recurrence.germanLabel),
                       const SizedBox(height: 8),
