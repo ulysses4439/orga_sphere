@@ -197,9 +197,9 @@ app.patch('/tasks/:id/done', async (req, res) => {
       .input('completedAt', sql.DateTime2, now)
       .query("UPDATE Task SET status = 'done', completedAt = @completedAt WHERE id = @id");
 
-    await createNextCapsuleIfNeeded(p, task);
+    const nextTask = await createNextCapsuleIfNeeded(p, task);
 
-    res.json({ success: true });
+    res.json({ success: true, nextTask: nextTask || null });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -241,6 +241,11 @@ app.delete('/tasks/:id', async (req, res) => {
     if (taskResult.recordset.length === 0) {
       return res.status(404).json({ error: 'Task not found' });
     }
+
+    // Detach successor tasks before deleting (they keep their own data, just lose the chain link)
+    await p.request()
+      .input('id', sql.NVarChar, id)
+      .query('UPDATE Task SET previousTaskId = NULL WHERE previousTaskId = @id');
 
     await p.request()
       .input('id', sql.NVarChar, id)

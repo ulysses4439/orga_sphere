@@ -91,10 +91,13 @@ class TaskService {
   }
 
   Future<void> markAsDone(String taskId) async {
-    await ApiService.markAsDone(taskId);
+    final nextTask = await ApiService.markAsDone(taskId);
     final task = getTaskById(taskId);
     if (task != null) {
       task.markAsDone();
+    }
+    if (nextTask != null) {
+      _tasks.add(nextTask);
     }
   }
 

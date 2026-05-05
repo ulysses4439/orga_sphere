@@ -53,12 +53,15 @@ class ApiService {
     return Task.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
-  static Future<void> markAsDone(String taskId) async {
+  static Future<Task?> markAsDone(String taskId) async {
     final response = await http.patch(
       Uri.parse('$_baseUrl/tasks/$taskId/done'),
       headers: {'Content-Type': 'application/json'},
     );
     _checkStatus(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    final next = body['nextTask'];
+    return next != null ? Task.fromJson(next as Map<String, dynamic>) : null;
   }
 
   static Future<void> reopenTask(String taskId) async {
