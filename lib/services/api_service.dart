@@ -13,55 +13,21 @@ class ApiService {
     return data.map((j) => TaskDomain.fromJson(j as Map<String, dynamic>)).toList();
   }
 
-  static Future<List<TaskTemplate>> getTemplates() async {
-    final response = await http.get(Uri.parse('$_baseUrl/templates'));
+  static Future<List<Task>> getActiveTasks() async {
+    final response = await http.get(Uri.parse('$_baseUrl/tasks'));
     _checkStatus(response);
     final List<dynamic> data = jsonDecode(response.body);
-    return data.map((j) => TaskTemplate.fromJson(j as Map<String, dynamic>)).toList();
+    return data.map((j) => Task.fromJson(j as Map<String, dynamic>)).toList();
   }
 
-  static Future<List<TaskInstance>> getActiveInstances() async {
-    final response = await http.get(Uri.parse('$_baseUrl/instances'));
+  static Future<List<Task>> getArchivedTasks() async {
+    final response = await http.get(Uri.parse('$_baseUrl/tasks/archived'));
     _checkStatus(response);
     final List<dynamic> data = jsonDecode(response.body);
-    return data.map((j) => TaskInstance.fromJson(j as Map<String, dynamic>)).toList();
+    return data.map((j) => Task.fromJson(j as Map<String, dynamic>)).toList();
   }
 
-  static Future<List<TaskInstance>> getArchivedInstances() async {
-    final response = await http.get(Uri.parse('$_baseUrl/instances/archived'));
-    _checkStatus(response);
-    final List<dynamic> data = jsonDecode(response.body);
-    return data.map((j) => TaskInstance.fromJson(j as Map<String, dynamic>)).toList();
-  }
-
-  static Future<List<TaskLogEntry>> getLogs(String instanceId) async {
-    final response = await http.get(Uri.parse('$_baseUrl/logs/$instanceId'));
-    _checkStatus(response);
-    final List<dynamic> data = jsonDecode(response.body);
-    return data.map((j) => TaskLogEntry.fromJson(j as Map<String, dynamic>)).toList();
-  }
-
-  static Future<TaskLogEntry> addLogEntry(String instanceId, String user, String text) async {
-    final response = await http.post(
-      Uri.parse('$_baseUrl/logs'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'instanceId': instanceId, 'user': user, 'text': text}),
-    );
-    _checkStatus(response);
-    return TaskLogEntry.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
-  }
-
-  static Future<TaskDomain> createDomain(String name, String description) async {
-    final response = await http.post(
-      Uri.parse('$_baseUrl/domains'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'name': name, 'description': description}),
-    );
-    _checkStatus(response);
-    return TaskDomain.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
-  }
-
-  static Future<TaskTemplate> createTemplate({
+  static Future<Task> createTask({
     required String domainId,
     required String title,
     required String description,
@@ -71,7 +37,7 @@ class ApiService {
     required int recurrenceInterval,
   }) async {
     final response = await http.post(
-      Uri.parse('$_baseUrl/templates'),
+      Uri.parse('$_baseUrl/tasks'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'domainId': domainId,
@@ -84,39 +50,42 @@ class ApiService {
       }),
     );
     _checkStatus(response);
-    return TaskTemplate.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+    return Task.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
-  static Future<TaskInstance> createInstance({
-    required String templateId,
-    required String domainId,
-    required String title,
-    required String description,
-    required DateTime startDate,
-    required DateTime dueDate,
-  }) async {
-    final response = await http.post(
-      Uri.parse('$_baseUrl/instances'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'templateId': templateId,
-        'domainId': domainId,
-        'title': title,
-        'description': description,
-        'startDate': startDate.toIso8601String(),
-        'dueDate': dueDate.toIso8601String(),
-      }),
-    );
-    _checkStatus(response);
-    return TaskInstance.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
-  }
-
-  static Future<void> markAsDone(String instanceId) async {
+  static Future<void> markAsDone(String taskId) async {
     final response = await http.patch(
-      Uri.parse('$_baseUrl/instances/$instanceId/done'),
+      Uri.parse('$_baseUrl/tasks/$taskId/done'),
       headers: {'Content-Type': 'application/json'},
     );
     _checkStatus(response);
+  }
+
+  static Future<TaskDomain> createDomain(String name, String description) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/domains'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'name': name, 'description': description}),
+    );
+    _checkStatus(response);
+    return TaskDomain.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  static Future<List<TaskLogEntry>> getLogs(String taskId) async {
+    final response = await http.get(Uri.parse('$_baseUrl/logs/$taskId'));
+    _checkStatus(response);
+    final List<dynamic> data = jsonDecode(response.body);
+    return data.map((j) => TaskLogEntry.fromJson(j as Map<String, dynamic>)).toList();
+  }
+
+  static Future<TaskLogEntry> addLogEntry(String taskId, String user, String text) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/logs'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'taskId': taskId, 'user': user, 'text': text}),
+    );
+    _checkStatus(response);
+    return TaskLogEntry.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
   static void _checkStatus(http.Response response) {

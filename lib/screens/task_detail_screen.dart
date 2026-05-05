@@ -14,7 +14,7 @@ class TaskDetailScreen extends StatefulWidget {
 
 class _TaskDetailScreenState extends State<TaskDetailScreen> {
   final TaskService _taskService = TaskService();
-  late TaskInstance? _task;
+  late Task? _task;
   final _logTextController = TextEditingController();
   final _userNameController = TextEditingController(text: 'Steven');
   bool _isBusy = false;
@@ -22,7 +22,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   @override
   void initState() {
     super.initState();
-    _task = _taskService.getInstanceById(widget.taskId);
+    _task = _taskService.getTaskById(widget.taskId);
   }
 
   @override
@@ -50,7 +50,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
       _logTextController.clear();
       if (!mounted) return;
       setState(() {
-        _task = _taskService.getInstanceById(widget.taskId);
+        _task = _taskService.getTaskById(widget.taskId);
         _isBusy = false;
       });
       ScaffoldMessenger.of(context).showSnackBar(
@@ -66,23 +66,24 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
   }
 
   void _markAsDone() {
-    final template = _task != null ? _taskService.getTemplateById(_task!.templateId) : null;
-    final isRecurring = template?.recurrence.isRecurring ?? false;
-    final confirmationText = isRecurring
-        ? 'Dies markiert die Aufgabe als abgeschlossen und erstellt automatisch eine neue Wiederholung.'
-        : 'Dies markiert die Aufgabe als abgeschlossen. Es wird keine neue Aufgabe erstellt.';
+    final task = _task;
+    if (task == null) return;
+
+    final confirmationText = task.isRecurring
+        ? 'Aufgabe wird als erledigt markiert. Da es eine Wiederholungsaufgabe ist, wird automatisch die nächste Kapsel angelegt.'
+        : 'Aufgabe wird als erledigt markiert und ins Archiv verschoben.';
 
     showDialog(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Aufgabe als fertig markieren?'),
+        title: const Text('Aufgabe erledigt?'),
         content: Text(confirmationText),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(dialogContext),
             child: const Text('Abbrechen'),
           ),
-          TextButton(
+          FilledButton(
             onPressed: () async {
               Navigator.pop(dialogContext);
               setState(() => _isBusy = true);
@@ -90,11 +91,11 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 await _taskService.markAsDone(widget.taskId);
                 if (!mounted) return;
                 setState(() {
-                  _task = _taskService.getInstanceById(widget.taskId);
+                  _task = _taskService.getTaskById(widget.taskId);
                   _isBusy = false;
                 });
                 ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text('Aufgabe als fertig markiert')),
+                  const SnackBar(content: Text('Aufgabe erledigt')),
                 );
               } catch (e) {
                 if (!mounted) return;
@@ -104,7 +105,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                 );
               }
             },
-            child: const Text('Ja, fertig stellen'),
+            child: const Text('Erledigt'),
           ),
         ],
       ),
@@ -123,8 +124,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     final task = _task!;
     final dueDate = task.dueDate;
     final domain = _taskService.getDomainById(task.domainId);
-    final template = _taskService.getTemplateById(task.templateId);
-    final recurrenceLabel = template?.recurrence.germanLabel ?? 'Einmalig';
+    final isDone = task.status == TaskStatus.done;
 
     return Scaffold(
       appBar: AppBar(
@@ -161,7 +161,10 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                         ],
                       ),
                       const SizedBox(height: 8),
-                      Text('Jahr: ${task.year}', style: Theme.of(context).textTheme.titleMedium),
+                      Text(
+                        'Jahr: ${task.year}',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
                     ],
                   ),
                 ),
@@ -174,18 +177,37 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                       const SizedBox(height: 16),
                       _buildInfoRow('Bereich', domain?.name ?? 'Allgemein'),
                       const SizedBox(height: 8),
-                      _buildInfoRow('Wiederholung', recurrenceLabel),
+                      _buildInfoRow('Wiederholung', task.recurrence.germanLabel),
                       const SizedBox(height: 8),
-                      _buildInfoRow('Fällig am', '${dueDate.day}. ${_monthName(dueDate.month)} ${dueDate.year}'),
+                      _buildInfoRow(
+                        'Startdatum',
+                        '${task.startDate.day}. ${_monthName(task.startDate.month)} ${task.startDate.year}',
+                      ),
                       const SizedBox(height: 8),
-                      _buildInfoRow('Startdatum', '${task.startDate.day}. ${_monthName(task.startDate.month)} ${task.startDate.year}'),
-                      const SizedBox(height: 8),
-                      _buildInfoRow('Erstellt am', '${task.createdAt.day}. ${_monthName(task.createdAt.month)} ${task.createdAt.year}'),
+                      _buildInfoRow(
+                        'Fällig am',
+                        '${dueDate.day}. ${_monthName(dueDate.month)} ${dueDate.year}',
+                      ),
                       if (task.completedAt != null) ...[
                         const SizedBox(height: 8),
                         _buildInfoRow(
                           'Abgeschlossen am',
                           '${task.completedAt!.day}. ${_monthName(task.completedAt!.month)} ${task.completedAt!.year}',
+                        ),
+                      ],
+                      if (!isDone) ...[
+                        const SizedBox(height: 24),
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: _isBusy ? null : _markAsDone,
+                            icon: const Icon(Icons.check_circle_outline),
+                            label: const Text('Erledigt'),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                            ),
+                          ),
                         ),
                       ],
                     ],
@@ -197,18 +219,7 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text('Aktivitätsverlauf', style: Theme.of(context).textTheme.titleLarge),
-                          if (task.status != TaskStatus.done)
-                            TextButton.icon(
-                              onPressed: _isBusy ? null : _markAsDone,
-                              icon: const Icon(Icons.check),
-                              label: const Text('Als fertig markieren'),
-                            ),
-                        ],
-                      ),
+                      Text('Aktivitätsverlauf', style: Theme.of(context).textTheme.titleLarge),
                       const SizedBox(height: 16),
                       if (task.logEntries.isEmpty)
                         Padding(
@@ -216,14 +227,17 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                           child: Center(
                             child: Text(
                               'Noch keine Einträge',
-                              style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey[600]),
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodyMedium
+                                  ?.copyWith(color: Colors.grey[600]),
                             ),
                           ),
                         )
                       else
                         _buildTimeline(task.logEntries),
                       const SizedBox(height: 24),
-                      if (task.status != TaskStatus.done) _buildAddLogEntryForm(),
+                      if (!isDone) _buildAddLogEntryForm(),
                     ],
                   ),
                 ),
@@ -246,15 +260,17 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label, style: Theme.of(context).textTheme.titleSmall?.copyWith(color: Colors.grey[700])),
+        Text(label,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(color: Colors.grey[700])),
         const SizedBox(height: 8),
         Container(
+          width: double.infinity,
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
             border: Border.all(color: AppColors.lightGrey),
             borderRadius: BorderRadius.circular(8),
           ),
-          child: Text(content),
+          child: Text(content.isEmpty ? '–' : content),
         ),
       ],
     );
@@ -264,7 +280,8 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
-        Text(label, style: Theme.of(context).textTheme.titleSmall?.copyWith(color: Colors.grey[700])),
+        Text(label,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(color: Colors.grey[700])),
         Text(value, style: Theme.of(context).textTheme.titleSmall),
       ],
     );
@@ -305,11 +322,17 @@ class _TaskDetailScreenState extends State<TaskDetailScreen> {
                         children: [
                           Text(
                             entry.user,
-                            style: Theme.of(context).textTheme.titleSmall?.copyWith(fontWeight: FontWeight.bold),
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleSmall
+                                ?.copyWith(fontWeight: FontWeight.bold),
                           ),
                           Text(
                             _formatDate(entry.timestamp),
-                            style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(color: Colors.grey[600]),
                           ),
                         ],
                       ),

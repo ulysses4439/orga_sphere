@@ -57,11 +57,11 @@ class _TaskListScreenState extends State<TaskListScreen> {
             return TabBarView(
               children: [
                 _buildTaskList(
-                  _taskService.getActiveInstances(),
+                  _taskService.getActiveTasks(),
                   'Keine aktiven Aufgaben vorhanden',
                 ),
                 _buildTaskList(
-                  _taskService.getArchivedInstances(),
+                  _taskService.getArchivedTasks(),
                   'Keine archivierten Aufgaben vorhanden',
                 ),
               ],
@@ -93,20 +93,11 @@ class _TaskListScreenState extends State<TaskListScreen> {
               },
             ),
             ListTile(
-              leading: const Icon(Icons.assignment_outlined),
-              title: const Text('Vorlage anlegen'),
-              onTap: () async {
-                Navigator.of(ctx).pop();
-                await Navigator.of(context).pushNamed('/create-template');
-                setState(() {});
-              },
-            ),
-            ListTile(
               leading: const Icon(Icons.add_task),
               title: const Text('Aufgabe anlegen'),
               onTap: () async {
                 Navigator.of(ctx).pop();
-                await Navigator.of(context).pushNamed('/create-instance');
+                await Navigator.of(context).pushNamed('/create-task');
                 setState(() {});
               },
             ),
@@ -116,7 +107,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
     );
   }
 
-  Widget _buildTaskList(List<TaskInstance> tasks, String emptyMessage) {
+  Widget _buildTaskList(List<Task> tasks, String emptyMessage) {
     if (tasks.isEmpty) {
       return Center(
         child: Column(
@@ -135,17 +126,14 @@ class _TaskListScreenState extends State<TaskListScreen> {
       itemCount: tasks.length,
       itemBuilder: (context, index) {
         final task = tasks[index];
-        final template = _taskService.getTemplateById(task.templateId);
-        final recurrenceLabel = template?.recurrence.germanLabel ?? 'Unbekannt';
         final domainName = _taskService.getDomainById(task.domainId)?.name ?? 'Allgemein';
 
         return _TaskListItem(
           task: task,
           domainName: domainName,
-          recurrenceLabel: recurrenceLabel,
           onTap: () async {
             await Navigator.of(context).pushNamed('/task-detail', arguments: task.id);
-            setState(() {}); // refresh list after returning from detail
+            setState(() {});
           },
         );
       },
@@ -154,15 +142,13 @@ class _TaskListScreenState extends State<TaskListScreen> {
 }
 
 class _TaskListItem extends StatelessWidget {
-  final TaskInstance task;
+  final Task task;
   final String domainName;
-  final String recurrenceLabel;
   final VoidCallback onTap;
 
   const _TaskListItem({
     required this.task,
     required this.domainName,
-    required this.recurrenceLabel,
     required this.onTap,
   });
 
@@ -199,12 +185,12 @@ class _TaskListItem extends StatelessWidget {
             Text('Bereich: $domainName', style: Theme.of(context).textTheme.bodySmall),
             const SizedBox(height: 4),
             Text(
-              'Jahr: ${task.year} | Fällig: ${dueDate.day}. ${_monthName(dueDate.month)}',
+              'Fällig: ${dueDate.day}. ${_monthName(dueDate.month)} ${dueDate.year}',
               style: Theme.of(context).textTheme.bodySmall,
             ),
             const SizedBox(height: 4),
             Text(
-              recurrenceLabel,
+              task.recurrence.germanLabel,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[700]),
             ),
             const SizedBox(height: 4),
@@ -239,7 +225,8 @@ class _TaskListItem extends StatelessWidget {
   }
 
   String _monthName(int month) {
-    const months = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun', 'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
+    const months = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
+                    'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
     return months[month - 1];
   }
 

@@ -2,14 +2,14 @@ import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/task_service.dart';
 
-class CreateTemplateScreen extends StatefulWidget {
-  const CreateTemplateScreen({super.key});
+class CreateTaskScreen extends StatefulWidget {
+  const CreateTaskScreen({super.key});
 
   @override
-  State<CreateTemplateScreen> createState() => _CreateTemplateScreenState();
+  State<CreateTaskScreen> createState() => _CreateTaskScreenState();
 }
 
-class _CreateTemplateScreenState extends State<CreateTemplateScreen> {
+class _CreateTaskScreenState extends State<CreateTaskScreen> {
   final _formKey = GlobalKey<FormState>();
   final _titleController = TextEditingController();
   final _descController = TextEditingController();
@@ -36,7 +36,7 @@ class _CreateTemplateScreenState extends State<CreateTemplateScreen> {
       context: context,
       initialDate: initial,
       firstDate: DateTime(2020),
-      lastDate: DateTime(2035),
+      lastDate: DateTime(2040),
     );
     if (picked == null) return;
     setState(() {
@@ -53,7 +53,7 @@ class _CreateTemplateScreenState extends State<CreateTemplateScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
     try {
-      await _taskService.createTemplate(
+      await _taskService.createTask(
         domainId: _selectedDomainId!,
         title: _titleController.text.trim(),
         description: _descController.text.trim(),
@@ -90,9 +90,7 @@ class _CreateTemplateScreenState extends State<CreateTemplateScreen> {
     final domains = _taskService.getDomains();
 
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('Vorlage anlegen'),
-      ),
+      appBar: AppBar(title: const Text('Aufgabe anlegen')),
       body: _saving
           ? const Center(child: CircularProgressIndicator())
           : Form(
@@ -169,11 +167,9 @@ class _CreateTemplateScreenState extends State<CreateTemplateScreen> {
                         const SizedBox(width: 12),
                         IconButton(
                           icon: const Icon(Icons.remove_circle_outline),
-                          onPressed:
-                              _interval > 1 ? () => setState(() => _interval--) : null,
+                          onPressed: _interval > 1 ? () => setState(() => _interval--) : null,
                         ),
-                        Text('$_interval',
-                            style: Theme.of(context).textTheme.titleLarge),
+                        Text('$_interval', style: Theme.of(context).textTheme.titleLarge),
                         IconButton(
                           icon: const Icon(Icons.add_circle_outline),
                           onPressed: () => setState(() => _interval++),

@@ -6,8 +6,6 @@ void main() {
   runApp(const OrgaSphereApp());
 }
 
-/// Main OrgaSphere application
-/// A Flutter app for managing recurring organizational tasks
 class OrgaSphereApp extends StatelessWidget {
   const OrgaSphereApp({super.key});
 
@@ -16,34 +14,19 @@ class OrgaSphereApp extends StatelessWidget {
     return MaterialApp(
       title: 'OrgaSphere',
       theme: AppTheme.light,
-      // Named routes for navigation
       onGenerateRoute: (settings) {
         switch (settings.name) {
           case '/':
-            return MaterialPageRoute(
-              builder: (_) => const TaskListScreen(),
-            );
+            return MaterialPageRoute(builder: (_) => const TaskListScreen());
           case '/task-detail':
             final taskId = settings.arguments as String;
-            return MaterialPageRoute(
-              builder: (_) => TaskDetailScreen(taskId: taskId),
-            );
+            return MaterialPageRoute(builder: (_) => TaskDetailScreen(taskId: taskId));
           case '/create-domain':
-            return MaterialPageRoute(
-              builder: (_) => const CreateDomainScreen(),
-            );
-          case '/create-template':
-            return MaterialPageRoute(
-              builder: (_) => const CreateTemplateScreen(),
-            );
-          case '/create-instance':
-            return MaterialPageRoute(
-              builder: (_) => const CreateInstanceScreen(),
-            );
+            return MaterialPageRoute(builder: (_) => const CreateDomainScreen());
+          case '/create-task':
+            return MaterialPageRoute(builder: (_) => const CreateTaskScreen());
           default:
-            return MaterialPageRoute(
-              builder: (_) => const TaskListScreen(),
-            );
+            return MaterialPageRoute(builder: (_) => const TaskListScreen());
         }
       },
       home: const TaskListScreen(),
