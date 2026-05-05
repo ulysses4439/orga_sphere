@@ -28,22 +28,22 @@ class AppTheme {
         ),
         scaffoldBackgroundColor: AppColors.offWhite,
 
-        // App-Bar: Navy mit weißem Text
+        // App-Bar: NavyPale mit Navy-Text
         appBarTheme: const AppBarTheme(
-          backgroundColor: AppColors.navy,
-          foregroundColor: AppColors.textWhite,
+          backgroundColor: AppColors.navyPale,
+          foregroundColor: AppColors.navy,
           elevation: 0,
           surfaceTintColor: Colors.transparent,
           titleTextStyle: TextStyle(
-            color: AppColors.textWhite,
+            color: AppColors.navy,
             fontSize: 20,
             fontWeight: FontWeight.w600,
           ),
         ),
 
-        // Tab-Bar: weißer aktiver Tab, Teal-Indikator
+        // Tab-Bar: Navy aktiver Tab, Teal-Indikator
         tabBarTheme: const TabBarThemeData(
-          labelColor: AppColors.textWhite,
+          labelColor: AppColors.navy,
           unselectedLabelColor: AppColors.navySoft,
           indicatorColor: AppColors.teal,
           dividerColor: Colors.transparent,

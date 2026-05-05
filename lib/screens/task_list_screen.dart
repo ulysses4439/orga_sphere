@@ -12,6 +12,19 @@ class TaskListScreen extends StatefulWidget {
 
 class _TaskListScreenState extends State<TaskListScreen> {
   final TaskService _taskService = TaskService();
+  String? _selectedDomainId;
+  bool _isReady = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _taskService.ready.then((_) => setState(() => _isReady = true));
+  }
+
+  List<Task> _filtered(List<Task> tasks) {
+    if (_selectedDomainId == null) return tasks;
+    return tasks.where((t) => t.domainId == _selectedDomainId).toList();
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -19,12 +32,29 @@ class _TaskListScreenState extends State<TaskListScreen> {
       length: 2,
       child: Scaffold(
         appBar: AppBar(
-          title: const Text('OrgaSphere'),
-          bottom: const TabBar(
-            tabs: [
-              Tab(text: 'Aktiv'),
-              Tab(text: 'Archiv'),
-            ],
+          toolbarHeight: 64,
+          centerTitle: true,
+          title: Image.asset(
+            'assets/images/logo_full.png',
+            height: 52,
+            fit: BoxFit.contain,
+          ),
+          bottom: PreferredSize(
+            preferredSize: Size.fromHeight(
+              (_isReady ? 72.0 : 0.0) + kTextTabBarHeight,
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                if (_isReady) _buildFilterBar(),
+                const TabBar(
+                  tabs: [
+                    Tab(text: 'Aktiv'),
+                    Tab(text: 'Archiv'),
+                  ],
+                ),
+              ],
+            ),
           ),
         ),
         body: FutureBuilder<void>(
@@ -57,11 +87,11 @@ class _TaskListScreenState extends State<TaskListScreen> {
             return TabBarView(
               children: [
                 _buildTaskList(
-                  _taskService.getActiveTasks(),
+                  _filtered(_taskService.getActiveTasks()),
                   'Keine aktiven Spheres vorhanden',
                 ),
                 _buildTaskList(
-                  _taskService.getArchivedTasks(),
+                  _filtered(_taskService.getArchivedTasks()),
                   'Keine archivierten Spheres vorhanden',
                 ),
               ],
@@ -71,6 +101,48 @@ class _TaskListScreenState extends State<TaskListScreen> {
         floatingActionButton: FloatingActionButton(
           onPressed: _showCreateMenu,
           child: const Icon(Icons.add),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildFilterBar() {
+    final domains = _taskService.getDomains();
+    final foreground = Theme.of(context).appBarTheme.foregroundColor;
+    final labelStyle = Theme.of(context).textTheme.labelLarge?.copyWith(
+          color: foreground?.withValues(alpha: 0.8),
+          letterSpacing: 1.2,
+          fontWeight: FontWeight.w700,
+        );
+    return Center(
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Text('Orbits', style: labelStyle),
+            const SizedBox(width: 10),
+            ChoiceChip(
+              label: const Text('Alle'),
+              selected: _selectedDomainId == null,
+              onSelected: (_) => setState(() => _selectedDomainId = null),
+              visualDensity: VisualDensity.compact,
+            ),
+            ...domains.map((d) => Padding(
+              padding: const EdgeInsets.only(left: 6),
+              child: ChoiceChip(
+                label: Text(d.name),
+                selected: _selectedDomainId == d.id,
+                selectedColor: d.color,
+                onSelected: (_) => setState(
+                  () => _selectedDomainId =
+                      _selectedDomainId == d.id ? null : d.id,
+                ),
+                visualDensity: VisualDensity.compact,
+              ),
+            )),
+          ],
         ),
       ),
     );
@@ -159,22 +231,34 @@ class _TaskListItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final dueDate = task.dueDate;
-    final isOverdue = task.isOverdue;
-    final isUpcoming = task.isUpcoming;
+    final now = DateTime.now();
+    final daysUntilDue = dueDate.difference(now).inDays;
 
-    late Color statusColor;
-    late IconData statusIcon;
-
+    // Traffic light: urgency based on due date
+    final Color urgencyColor;
     if (task.status == TaskStatus.done) {
-      statusColor = Colors.green;
-      statusIcon = Icons.check_circle;
-    } else if (task.status == TaskStatus.inProgress) {
-      statusIcon = Icons.timelapse;
-      statusColor = isOverdue ? Colors.red : isUpcoming ? Colors.orange : AppColors.teal;
+      urgencyColor = Colors.grey[400]!;
+    } else if (dueDate.isBefore(now)) {
+      urgencyColor = Colors.red;
+    } else if (daysUntilDue <= 14) {
+      urgencyColor = Colors.amber;
     } else {
-      // open
-      statusIcon = isOverdue ? Icons.error_outline : isUpcoming ? Icons.warning_amber : Icons.radio_button_unchecked;
-      statusColor = isOverdue ? Colors.red : isUpcoming ? Colors.orange : Colors.grey;
+      urgencyColor = Colors.green;
+    }
+
+    // Status icon
+    final IconData statusIcon;
+    final Color statusColor;
+    switch (task.status) {
+      case TaskStatus.open:
+        statusIcon = Icons.radio_button_unchecked;
+        statusColor = Colors.grey[600]!;
+      case TaskStatus.inProgress:
+        statusIcon = Icons.sync;
+        statusColor = AppColors.teal;
+      case TaskStatus.done:
+        statusIcon = Icons.check_circle;
+        statusColor = Colors.green;
     }
 
     return Card(
@@ -182,7 +266,14 @@ class _TaskListItem extends StatelessWidget {
       color: domainColor,
       child: ListTile(
         onTap: onTap,
-        leading: Icon(statusIcon, color: statusColor),
+        leading: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.circle, color: urgencyColor, size: 14),
+            const SizedBox(height: 6),
+            Icon(statusIcon, color: statusColor, size: 22),
+          ],
+        ),
         title: Text(task.title),
         subtitle: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
