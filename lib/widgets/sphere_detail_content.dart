@@ -26,19 +26,46 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
   late Task? _task;
   final _logTextController = TextEditingController();
   final _userNameController = TextEditingController(text: 'Steven');
+  late final TextEditingController _descriptionController;
+  late final FocusNode _descriptionFocusNode;
+  String _lastSavedDescription = '';
   bool _isBusy = false;
 
   @override
   void initState() {
     super.initState();
     _task = _taskService.getTaskById(widget.taskId);
+    _lastSavedDescription = _task?.description ?? '';
+    _descriptionController = TextEditingController(text: _lastSavedDescription);
+    _descriptionFocusNode = FocusNode()
+      ..addListener(_onDescriptionFocusChange);
   }
 
   @override
   void dispose() {
     _logTextController.dispose();
     _userNameController.dispose();
+    _descriptionController.dispose();
+    _descriptionFocusNode.dispose();
     super.dispose();
+  }
+
+  void _onDescriptionFocusChange() {
+    if (!_descriptionFocusNode.hasFocus) _saveDescription();
+  }
+
+  Future<void> _saveDescription() async {
+    final newDesc = _descriptionController.text;
+    if (newDesc == _lastSavedDescription) return;
+    _lastSavedDescription = newDesc;
+    try {
+      await _taskService.updateTaskDescription(widget.taskId, newDesc);
+      if (mounted) setState(() => _task = _taskService.getTaskById(widget.taskId));
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fehler: $e')));
+      }
+    }
   }
 
   Future<void> _addLogEntry() async {
@@ -346,7 +373,7 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildInfoSection('Beschreibung', task.description),
+                    _buildDescriptionField(),
                     const SizedBox(height: 16),
                     _buildInfoRow('Orbit', domain?.name ?? 'Allgemein'),
                     const SizedBox(height: 8),
@@ -538,21 +565,36 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     );
   }
 
-  Widget _buildInfoSection(String label, String content) {
+  Widget _buildDescriptionField() {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text(label,
-            style: Theme.of(context).textTheme.titleSmall?.copyWith(color: Colors.grey[700])),
+        Text(
+          'Beschreibung',
+          style: Theme.of(context).textTheme.titleSmall?.copyWith(color: Colors.grey[700]),
+        ),
         const SizedBox(height: 8),
-        Container(
-          width: double.infinity,
-          padding: const EdgeInsets.all(12),
-          decoration: BoxDecoration(
-            border: Border.all(color: AppColors.lightGrey),
-            borderRadius: BorderRadius.circular(8),
+        TextField(
+          controller: _descriptionController,
+          focusNode: _descriptionFocusNode,
+          maxLines: null,
+          minLines: 3,
+          textCapitalization: TextCapitalization.sentences,
+          decoration: InputDecoration(
+            hintText: 'Beschreibung hinzufügen…',
+            contentPadding: const EdgeInsets.all(12),
+            border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+            enabledBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: BorderSide(color: AppColors.lightGrey),
+            ),
+            focusedBorder: OutlineInputBorder(
+              borderRadius: BorderRadius.circular(8),
+              borderSide: const BorderSide(color: AppColors.teal, width: 2),
+            ),
+            filled: true,
+            fillColor: AppColors.appWhite,
           ),
-          child: Text(content.isEmpty ? '–' : content),
         ),
       ],
     );

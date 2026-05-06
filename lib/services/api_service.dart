@@ -142,6 +142,15 @@ class ApiService {
     );
   }
 
+  static Future<void> updateTaskDescription(String taskId, String description) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/tasks/$taskId/description'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'description': description}),
+    );
+    _checkStatus(response);
+  }
+
   static Future<void> setReminder(String taskId, DateTime? reminderAt) async {
     final response = await http.patch(
       Uri.parse('$_baseUrl/tasks/$taskId/reminder'),

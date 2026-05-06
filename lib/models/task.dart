@@ -6,7 +6,7 @@ class Task {
   final String id;
   final String domainId;
   final String title;
-  final String description;
+  String description;
   final DateTime startDate;
   final DateTime dueDate;
   final RecurrencePattern recurrence;

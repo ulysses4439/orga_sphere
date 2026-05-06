@@ -136,6 +136,12 @@ class TaskService {
     }
   }
 
+  Future<void> updateTaskDescription(String taskId, String description) async {
+    await ApiService.updateTaskDescription(taskId, description);
+    final task = getTaskById(taskId);
+    if (task != null) task.description = description;
+  }
+
   Future<void> setReminder(String taskId, DateTime? reminderAt) async {
     await ApiService.setReminder(taskId, reminderAt);
     final task = getTaskById(taskId);

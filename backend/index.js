@@ -314,6 +314,23 @@ app.patch('/tasks/:id/reopen', async (req, res) => {
   }
 });
 
+// Update task description (auto-saved inline edit)
+app.patch('/tasks/:id/description', async (req, res) => {
+  const { id } = req.params;
+  const { description } = req.body;
+  try {
+    const p = await getPool();
+    const result = await p.request()
+      .input('id',          sql.NVarChar, id)
+      .input('description', sql.NVarChar, description ?? '')
+      .query('UPDATE Task SET description = @description WHERE id = @id');
+    if (result.rowsAffected[0] === 0) return res.status(404).json({ error: 'Task not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Set or clear orbit-wide reminder for a task
 app.patch('/tasks/:id/reminder', async (req, res) => {
   const { id } = req.params;
