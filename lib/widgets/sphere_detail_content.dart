@@ -395,6 +395,9 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                     _buildInfoRow(
                       'Fällig am',
                       '${dueDate.day}. ${_monthName(dueDate.month)} ${dueDate.year}',
+                      valueColor: dueDate.isBefore(DateTime.now()) && !isDone
+                          ? Colors.red
+                          : null,
                     ),
                     const SizedBox(height: 8),
                     _buildReminderRow(task),
@@ -543,6 +546,10 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
       );
     }
 
+    final reminderExpired =
+        task.reminderAt!.isBefore(DateTime.now()) && task.status != TaskStatus.done;
+    final reminderColor = reminderExpired ? Colors.red : AppColors.teal;
+
     return InkWell(
       onTap: _isBusy ? null : _pickReminder,
       borderRadius: BorderRadius.circular(8),
@@ -550,13 +557,13 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
         padding: const EdgeInsets.symmetric(vertical: 6),
         child: Row(
           children: [
-            Icon(Icons.notifications_active, color: AppColors.teal, size: 20),
+            Icon(Icons.notifications_active, color: reminderColor, size: 20),
             const SizedBox(width: 8),
             Expanded(
               child: Text(
                 _formatReminderDate(task.reminderAt!),
                 style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      color: AppColors.teal,
+                      color: reminderColor,
                     ),
               ),
             ),
@@ -608,13 +615,14 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     );
   }
 
-  Widget _buildInfoRow(String label, String value) {
+  Widget _buildInfoRow(String label, String value, {Color? valueColor}) {
     return Row(
       mainAxisAlignment: MainAxisAlignment.spaceBetween,
       children: [
         Text(label,
             style: Theme.of(context).textTheme.titleSmall?.copyWith(color: Colors.grey[700])),
-        Text(value, style: Theme.of(context).textTheme.titleSmall),
+        Text(value,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(color: valueColor)),
       ],
     );
   }

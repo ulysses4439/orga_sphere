@@ -77,7 +77,11 @@ class TaskListItem extends StatelessWidget {
             const SizedBox(height: 4),
             Text(
               'Fällig: ${dueDate.day}. ${_monthName(dueDate.month)} ${dueDate.year}',
-              style: Theme.of(context).textTheme.bodySmall,
+              style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                    color: dueDate.isBefore(now) && task.status != TaskStatus.done
+                        ? Colors.red
+                        : null,
+                  ),
             ),
             const SizedBox(height: 4),
             Text(
@@ -86,20 +90,31 @@ class TaskListItem extends StatelessWidget {
             ),
             if (task.reminderAt != null) ...[
               const SizedBox(height: 4),
-              Row(
-                children: [
-                  Icon(Icons.notifications_outlined,
-                      size: 13, color: Colors.grey[600]),
-                  const SizedBox(width: 4),
-                  Text(
-                    _formatReminderDate(task.reminderAt!),
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: Colors.grey[600]),
-                  ),
-                ],
-              ),
+              Builder(builder: (context) {
+                final reminderExpired =
+                    task.reminderAt!.isBefore(now) && task.status != TaskStatus.done;
+                final reminderColor =
+                    reminderExpired ? Colors.red : Colors.grey[600]!;
+                return Row(
+                  children: [
+                    Icon(
+                      reminderExpired
+                          ? Icons.notifications_active
+                          : Icons.notifications_outlined,
+                      size: 13,
+                      color: reminderColor,
+                    ),
+                    const SizedBox(width: 4),
+                    Text(
+                      _formatReminderDate(task.reminderAt!),
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: reminderColor),
+                    ),
+                  ],
+                );
+              }),
             ],
             const SizedBox(height: 4),
             Row(
