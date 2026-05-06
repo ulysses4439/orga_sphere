@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/task_service.dart';
+import '../widgets/reminder_picker_dialog.dart';
 
 class CreateTaskScreen extends StatefulWidget {
   const CreateTaskScreen({super.key});
@@ -17,6 +18,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
   String? _selectedDomainId;
   DateTime _startDate = DateTime.now();
   DateTime _dueDate = DateTime.now().add(const Duration(days: 7));
+  DateTime? _reminderAt;
   RecurrenceFrequency _frequency = RecurrenceFrequency.none;
   int _interval = 1;
   bool _saving = false;
@@ -49,11 +51,20 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
     });
   }
 
+  Future<void> _pickReminder() async {
+    final result = await showDialog<DateTime>(
+      context: context,
+      builder: (ctx) => ReminderPickerDialog(initialDateTime: _reminderAt),
+    );
+    if (result == null) return;
+    setState(() => _reminderAt = result);
+  }
+
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
     setState(() => _saving = true);
     try {
-      await _taskService.createTask(
+      final task = await _taskService.createTask(
         domainId: _selectedDomainId!,
         title: _titleController.text.trim(),
         description: _descController.text.trim(),
@@ -64,6 +75,9 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
           interval: _interval,
         ),
       );
+      if (_reminderAt != null) {
+        await _taskService.setReminder(task.id, _reminderAt);
+      }
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       if (mounted) {
@@ -145,6 +159,12 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                     onTap: () => _pickDate(false),
                   ),
                   const SizedBox(height: 16),
+                  _ReminderTile(
+                    reminderAt: _reminderAt,
+                    onTap: _pickReminder,
+                    onClear: () => setState(() => _reminderAt = null),
+                  ),
+                  const SizedBox(height: 16),
                   DropdownButtonFormField<RecurrenceFrequency>(
                     initialValue: _frequency,
                     decoration: const InputDecoration(
@@ -211,6 +231,55 @@ class _DateTile extends StatelessWidget {
           suffixIcon: const Icon(Icons.calendar_today),
         ),
         child: Text(_formatted),
+      ),
+    );
+  }
+}
+
+class _ReminderTile extends StatelessWidget {
+  final DateTime? reminderAt;
+  final VoidCallback onTap;
+  final VoidCallback onClear;
+
+  const _ReminderTile({
+    required this.reminderAt,
+    required this.onTap,
+    required this.onClear,
+  });
+
+  String _formatted(DateTime dt) {
+    final local = dt.toLocal();
+    const months = [
+      'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez',
+    ];
+    return '${local.day}. ${months[local.month - 1]} ${local.year}, '
+        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')} Uhr';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(4),
+      child: InputDecorator(
+        decoration: InputDecoration(
+          labelText: 'Erinnerung',
+          border: const OutlineInputBorder(),
+          suffixIcon: reminderAt != null
+              ? IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: onClear,
+                  tooltip: 'Erinnerung entfernen',
+                )
+              : const Icon(Icons.notifications_outlined),
+        ),
+        child: Text(
+          reminderAt != null ? _formatted(reminderAt!) : 'Keine Erinnerung',
+          style: reminderAt == null
+              ? TextStyle(color: Theme.of(context).hintColor)
+              : null,
+        ),
       ),
     );
   }
