@@ -304,7 +304,12 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
       onTap: () async {
         _reminderService.markShown(task.id);
         await _taskService.setReminder(task.id, null);
-        if (mounted) setState(() => _selectedSphereId = task.id);
+        if (mounted) {
+          setState(() {
+            _selectedOrbitId = task.domainId;
+            _selectedSphereId = task.id;
+          });
+        }
       },
     );
   }
