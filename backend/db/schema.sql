@@ -3,7 +3,8 @@ CREATE TABLE TaskDomain (
     id NVARCHAR(100) PRIMARY KEY,
     name NVARCHAR(100) NOT NULL,
     description NVARCHAR(500),
-    color NVARCHAR(7) NOT NULL DEFAULT '#F5F5F5'
+    color NVARCHAR(7) NOT NULL DEFAULT '#F5F5F5',
+    notificationEmails NVARCHAR(1000)
 );
 
 -- Task table (unified: replaces TaskTemplate + TaskInstance)
@@ -21,6 +22,7 @@ CREATE TABLE Task (
     createdAt DATETIME2 DEFAULT GETUTCDATE(),
     completedAt DATETIME2,
     reminderAt DATETIME2,
+    reminderEmailSentAt DATETIME2,
     previousTaskId NVARCHAR(100),
     FOREIGN KEY (domainId) REFERENCES TaskDomain(id),
     FOREIGN KEY (previousTaskId) REFERENCES Task(id)

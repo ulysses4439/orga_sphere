@@ -142,9 +142,32 @@ class TaskService {
     if (task != null) task.reminderAt = reminderAt;
   }
 
-  Future<TaskDomain> createDomain(String name, String description, String color) async {
-    final domain = await ApiService.createDomain(name, description, color);
+  Future<TaskDomain> createDomain(
+    String name,
+    String description,
+    String color, {
+    String notificationEmails = '',
+  }) async {
+    final domain = await ApiService.createDomain(
+      name, description, color,
+      notificationEmails: notificationEmails,
+    );
     _domains.add(domain);
     return domain;
+  }
+
+  Future<void> updateDomainEmails(String domainId, String notificationEmails) async {
+    await ApiService.updateDomainEmails(domainId, notificationEmails);
+    final idx = _domains.indexWhere((d) => d.id == domainId);
+    if (idx != -1) {
+      final d = _domains[idx];
+      _domains[idx] = TaskDomain(
+        id: d.id,
+        name: d.name,
+        description: d.description,
+        colorHex: d.colorHex,
+        notificationEmails: notificationEmails,
+      );
+    }
   }
 }

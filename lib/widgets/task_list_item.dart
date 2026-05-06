@@ -84,6 +84,23 @@ class TaskListItem extends StatelessWidget {
               task.recurrence.germanLabel,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[700]),
             ),
+            if (task.reminderAt != null) ...[
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Icon(Icons.notifications_outlined,
+                      size: 13, color: Colors.grey[600]),
+                  const SizedBox(width: 4),
+                  Text(
+                    _formatReminderDate(task.reminderAt!),
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: Colors.grey[600]),
+                  ),
+                ],
+              ),
+            ],
             const SizedBox(height: 4),
             Row(
               children: [
@@ -113,6 +130,16 @@ class TaskListItem extends StatelessWidget {
         trailing: const Icon(Icons.chevron_right),
       ),
     );
+  }
+
+  String _formatReminderDate(DateTime date) {
+    final local = date.toLocal();
+    const months = [
+      'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
+      'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'
+    ];
+    return '${local.day}. ${months[local.month - 1]} '
+        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')} Uhr';
   }
 
   String _monthName(int month) {

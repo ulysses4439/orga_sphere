@@ -30,6 +30,7 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
+  final _emailsController = TextEditingController();
   String _selectedColor = '#E6E6FA';
   bool _saving = false;
 
@@ -37,6 +38,7 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
   void dispose() {
     _nameController.dispose();
     _descController.dispose();
+    _emailsController.dispose();
     super.dispose();
   }
 
@@ -48,6 +50,7 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
         _nameController.text.trim(),
         _descController.text.trim(),
         _selectedColor,
+        notificationEmails: _emailsController.text.trim(),
       );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
@@ -96,6 +99,19 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
                     ),
                     textCapitalization: TextCapitalization.sentences,
                     maxLines: 3,
+                  ),
+                  const SizedBox(height: 16),
+                  TextFormField(
+                    controller: _emailsController,
+                    decoration: const InputDecoration(
+                      labelText: 'Erinnerungs-E-Mails',
+                      hintText: 'max@beispiel.de, anna@beispiel.de',
+                      helperText: 'Kommagetrennt – erhalten E-Mail wenn ein Reminder fällig ist',
+                      border: OutlineInputBorder(),
+                      prefixIcon: Icon(Icons.email_outlined),
+                    ),
+                    keyboardType: TextInputType.emailAddress,
+                    autocorrect: false,
                   ),
                   const SizedBox(height: 16),
                   InputDecorator(

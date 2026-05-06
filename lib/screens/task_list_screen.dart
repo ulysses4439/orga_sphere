@@ -1,6 +1,8 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/task_service.dart';
+import '../services/reminder_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/task_list_item.dart';
 import '../widgets/sphere_detail_content.dart';
@@ -14,6 +16,9 @@ class TaskListScreen extends StatefulWidget {
 
 class _TaskListScreenState extends State<TaskListScreen> {
   final TaskService _taskService = TaskService();
+  final ReminderService _reminderService = ReminderService();
+  StreamSubscription<ReminderEvent>? _reminderSub;
+
   String? _selectedOrbitId;
   String? _selectedSphereId;
 
@@ -23,8 +28,20 @@ class _TaskListScreenState extends State<TaskListScreen> {
   void initState() {
     super.initState();
     _taskService.ready.then((_) {
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      _reminderService.start();
+      _reminderSub = _reminderService.onReminderDue.listen(_onReminderDue);
+      // Show missed reminders after short delay so UI is fully built
+      Future.delayed(const Duration(seconds: 2), _checkMissedReminders);
+      setState(() {});
     });
+  }
+
+  @override
+  void dispose() {
+    _reminderSub?.cancel();
+    _reminderService.stop();
+    super.dispose();
   }
 
   bool get _isDesktop => MediaQuery.of(context).size.width >= _desktopBreakpoint;
@@ -34,14 +51,91 @@ class _TaskListScreenState extends State<TaskListScreen> {
     return tasks.where((t) => t.domainId == _selectedOrbitId).toList();
   }
 
-  @override
-  Widget build(BuildContext context) {
-    return _isDesktop ? _buildDesktopLayout() : _buildMobileLayout();
+  // ──────────────────────────────────────────────
+  // REMINDER LOGIC
+  // ──────────────────────────────────────────────
+
+  void _onReminderDue(ReminderEvent event) {
+    _reminderService.markShown(event.task.id);
+    if (mounted) _showReminderDialog(event.task);
   }
+
+  void _checkMissedReminders() {
+    final missed = _reminderService.getMissedReminders();
+    if (missed.isNotEmpty && mounted) setState(() {});
+  }
+
+  void _showReminderDialog(Task task) {
+    final domain = _taskService.getDomainById(task.domainId);
+    final reminderStr = task.reminderAt != null
+        ? _formatDateTime(task.reminderAt!.toLocal())
+        : '';
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.notifications_active, color: AppColors.teal, size: 32),
+        title: const Text('Erinnerung'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(task.title, style: Theme.of(context).textTheme.titleMedium),
+            const SizedBox(height: 4),
+            if (domain != null)
+              Text('Orbit: ${domain.name}',
+                  style: Theme.of(context).textTheme.bodySmall),
+            const SizedBox(height: 4),
+            Text(reminderStr,
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: Colors.grey[600])),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Schließen'),
+          ),
+          TextButton(
+            onPressed: () async {
+              Navigator.pop(ctx);
+              await _taskService.setReminder(task.id, null);
+              if (mounted) setState(() {});
+            },
+            child: const Text('Erinnerung löschen'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.pop(ctx);
+              setState(() => _selectedSphereId = task.id);
+            },
+            child: const Text('Sphere öffnen'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  String _formatDateTime(DateTime d) =>
+      '${d.day}. ${_monthName(d.month)} ${d.year}, '
+      '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')} Uhr';
+
+  String _monthName(int m) => [
+        'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
+        'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'
+      ][m - 1];
 
   // ──────────────────────────────────────────────
   // DESKTOP
   // ──────────────────────────────────────────────
+
+  @override
+  Widget build(BuildContext context) {
+    return _isDesktop ? _buildDesktopLayout() : _buildMobileLayout();
+  }
 
   Widget _buildDesktopLayout() {
     return Scaffold(
@@ -63,9 +157,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
           if (snapshot.connectionState != ConnectionState.done) {
             return const Center(child: CircularProgressIndicator());
           }
-          if (snapshot.hasError) {
-            return _buildErrorView(snapshot.error);
-          }
+          if (snapshot.hasError) return _buildErrorView(snapshot.error);
           return Row(
             children: [
               _buildOrbitSidebar(),
@@ -92,6 +184,8 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   Widget _buildOrbitSidebar() {
     final domains = _taskService.getDomains();
+    final missed = _reminderService.getMissedReminders();
+
     return SizedBox(
       width: 240,
       child: Column(
@@ -119,8 +213,69 @@ class _TaskListScreenState extends State<TaskListScreen> {
               },
             ),
           ),
+          if (missed.isNotEmpty) _buildMissedRemindersSection(missed),
         ],
       ),
+    );
+  }
+
+  Widget _buildMissedRemindersSection(List<Task> missed) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Divider(height: 1),
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          child: Row(
+            children: [
+              const Icon(Icons.notifications_active, size: 16, color: Colors.orange),
+              const SizedBox(width: 6),
+              Text(
+                'Verpasst (${missed.length})',
+                style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                      color: Colors.orange[800],
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
+            ],
+          ),
+        ),
+        ...missed.map((task) => _buildMissedReminderTile(task)),
+        const SizedBox(height: 8),
+      ],
+    );
+  }
+
+  Widget _buildMissedReminderTile(Task task) {
+    return ListTile(
+      dense: true,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 0),
+      leading: const Icon(Icons.notifications_none, size: 18, color: Colors.orange),
+      title: Text(
+        task.title,
+        maxLines: 1,
+        overflow: TextOverflow.ellipsis,
+        style: Theme.of(context).textTheme.bodySmall,
+      ),
+      subtitle: Text(
+        _formatDateTime(task.reminderAt!.toLocal()),
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[500]),
+      ),
+      trailing: IconButton(
+        icon: const Icon(Icons.close, size: 16),
+        padding: EdgeInsets.zero,
+        constraints: const BoxConstraints(),
+        tooltip: 'Erinnerung löschen',
+        onPressed: () async {
+          _reminderService.markShown(task.id);
+          await _taskService.setReminder(task.id, null);
+          if (mounted) setState(() {});
+        },
+      ),
+      onTap: () {
+        _reminderService.markShown(task.id);
+        setState(() => _selectedSphereId = task.id);
+      },
     );
   }
 
@@ -160,14 +315,9 @@ class _TaskListScreenState extends State<TaskListScreen> {
         children: [
           Padding(
             padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-            child: Text(
-              selectedOrbitName,
-              style: Theme.of(context).textTheme.titleLarge,
-            ),
+            child: Text(selectedOrbitName, style: Theme.of(context).textTheme.titleLarge),
           ),
-          const TabBar(
-            tabs: [Tab(text: 'Aktiv'), Tab(text: 'Archiv')],
-          ),
+          const TabBar(tabs: [Tab(text: 'Aktiv'), Tab(text: 'Archiv')]),
           Expanded(
             child: TabBarView(
               children: [
@@ -200,7 +350,6 @@ class _TaskListScreenState extends State<TaskListScreen> {
         ),
       );
     }
-
     return ListView.builder(
       padding: const EdgeInsets.symmetric(vertical: 8),
       itemCount: tasks.length,
@@ -235,9 +384,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
           if (snapshot.connectionState != ConnectionState.done) {
             return const Center(child: CircularProgressIndicator());
           }
-          if (snapshot.hasError) {
-            return _buildErrorView(snapshot.error);
-          }
+          if (snapshot.hasError) return _buildErrorView(snapshot.error);
           return _buildMobileOrbitList();
         },
       ),
@@ -250,8 +397,11 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   Widget _buildMobileOrbitList() {
     final domains = _taskService.getDomains();
+    final missed = _reminderService.getMissedReminders();
+
     return ListView(
       children: [
+        if (missed.isNotEmpty) _buildMobileMissedBanner(missed),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
           child: Text(
@@ -287,6 +437,60 @@ class _TaskListScreenState extends State<TaskListScreen> {
     );
   }
 
+  Widget _buildMobileMissedBanner(List<Task> missed) {
+    return Container(
+      margin: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.orange[50],
+        border: Border.all(color: Colors.orange),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+            child: Row(
+              children: [
+                const Icon(Icons.notifications_active, color: Colors.orange, size: 18),
+                const SizedBox(width: 8),
+                Text(
+                  'Verpasste Erinnerungen (${missed.length})',
+                  style: Theme.of(context).textTheme.labelMedium?.copyWith(
+                        color: Colors.orange[800],
+                        fontWeight: FontWeight.w700,
+                      ),
+                ),
+              ],
+            ),
+          ),
+          ...missed.map(
+            (task) => ListTile(
+              dense: true,
+              leading: const Icon(Icons.notifications_none, size: 18, color: Colors.orange),
+              title: Text(task.title, maxLines: 1, overflow: TextOverflow.ellipsis),
+              subtitle: Text(_formatDateTime(task.reminderAt!.toLocal())),
+              trailing: IconButton(
+                icon: const Icon(Icons.close, size: 16),
+                onPressed: () async {
+                  _reminderService.markShown(task.id);
+                  await _taskService.setReminder(task.id, null);
+                  if (mounted) setState(() {});
+                },
+              ),
+              onTap: () {
+                _reminderService.markShown(task.id);
+                final domain = _taskService.getDomainById(task.domainId);
+                _pushSphereList(task.domainId, domain?.name ?? 'Orbit');
+              },
+            ),
+          ),
+          const SizedBox(height: 4),
+        ],
+      ),
+    );
+  }
+
   Future<void> _pushSphereList(String? orbitId, String orbitName) async {
     await Navigator.of(context).pushNamed(
       '/sphere-list',
@@ -308,11 +512,8 @@ class _TaskListScreenState extends State<TaskListScreen> {
           const SizedBox(height: 16),
           Text('Verbindungsfehler', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 8),
-          Text(
-            '$error',
-            style: Theme.of(context).textTheme.bodySmall,
-            textAlign: TextAlign.center,
-          ),
+          Text('$error',
+              style: Theme.of(context).textTheme.bodySmall, textAlign: TextAlign.center),
         ],
       ),
     );

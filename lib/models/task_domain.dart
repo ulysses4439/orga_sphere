@@ -7,12 +7,14 @@ class TaskDomain {
   final String name;
   final String description;
   final String colorHex;
+  final String notificationEmails;
 
   TaskDomain({
     required this.id,
     required this.name,
     required this.description,
     this.colorHex = '#F5F5F5',
+    this.notificationEmails = '',
   });
 
   factory TaskDomain.fromJson(Map<String, dynamic> json) {
@@ -21,6 +23,7 @@ class TaskDomain {
       name: json['name'] as String,
       description: json['description'] as String? ?? '',
       colorHex: json['color'] as String? ?? '#F5F5F5',
+      notificationEmails: json['notificationEmails'] as String? ?? '',
     );
   }
 
