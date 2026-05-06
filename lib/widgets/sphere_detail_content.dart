@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import '../models/models.dart';
 import '../services/task_service.dart';
 import '../theme/app_colors.dart';
@@ -102,33 +103,18 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
   }
 
   Future<void> _pickReminder() async {
-    final now = DateTime.now();
-    final initial = _task?.reminderAt ?? now.add(const Duration(hours: 1));
+    // .toLocal() fixes UTC-stored reminderAt showing wrong time in the picker.
+    final initial = _task?.reminderAt?.toLocal();
 
-    final date = await showDatePicker(
+    final result = await showDialog<DateTime>(
       context: context,
-      initialDate: initial.isBefore(now) ? now : initial,
-      firstDate: now,
-      lastDate: DateTime(now.year + 5),
-      helpText: 'Erinnerungsdatum wählen',
+      builder: (ctx) => _ReminderPickerDialog(initialDateTime: initial),
     );
-    if (date == null || !mounted) return;
+    if (result == null || !mounted) return;
 
-    final time = await showTimePicker(
-      context: context,
-      initialTime: TimeOfDay.fromDateTime(initial),
-      helpText: 'Erinnerungszeit wählen',
-      builder: (context, child) => MediaQuery(
-        data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
-        child: child!,
-      ),
-    );
-    if (time == null || !mounted) return;
-
-    final reminderAt = DateTime(date.year, date.month, date.day, time.hour, time.minute);
     setState(() => _isBusy = true);
     try {
-      await _taskService.setReminder(widget.taskId, reminderAt);
+      await _taskService.setReminder(widget.taskId, result);
       if (!mounted) return;
       setState(() {
         _task = _taskService.getTaskById(widget.taskId);
@@ -764,5 +750,152 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     final local = date.toLocal();
     return '${local.day}. ${_monthName(local.month)} ${local.year}, '
         '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')} Uhr';
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Combined date + time picker dialog
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _ReminderPickerDialog extends StatefulWidget {
+  final DateTime? initialDateTime;
+  const _ReminderPickerDialog({this.initialDateTime});
+
+  @override
+  State<_ReminderPickerDialog> createState() => _ReminderPickerDialogState();
+}
+
+class _ReminderPickerDialogState extends State<_ReminderPickerDialog> {
+  late DateTime _selectedDate;
+  late final TextEditingController _hourCtrl;
+  late final TextEditingController _minCtrl;
+
+  @override
+  void initState() {
+    super.initState();
+    final now = DateTime.now();
+    final initial = widget.initialDateTime ?? now;
+    // If the stored reminder is in the past use today as the calendar default,
+    // but keep the stored time so the user can easily bump it forward.
+    _selectedDate = initial.isBefore(now)
+        ? DateTime(now.year, now.month, now.day)
+        : DateTime(initial.year, initial.month, initial.day);
+    _hourCtrl = TextEditingController(
+        text: initial.hour.toString().padLeft(2, '0'));
+    _minCtrl = TextEditingController(
+        text: initial.minute.toString().padLeft(2, '0'));
+  }
+
+  @override
+  void dispose() {
+    _hourCtrl.dispose();
+    _minCtrl.dispose();
+    super.dispose();
+  }
+
+  int get _hour => int.tryParse(_hourCtrl.text) ?? -1;
+  int get _minute => int.tryParse(_minCtrl.text) ?? -1;
+  bool get _valid => _hour >= 0 && _hour <= 23 && _minute >= 0 && _minute <= 59;
+
+  void _confirm() {
+    if (!_valid) return;
+    Navigator.pop(
+      context,
+      DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day,
+          _hour, _minute),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final now = DateTime.now();
+    return AlertDialog(
+      title: const Text('Erinnerung setzen'),
+      contentPadding: const EdgeInsets.fromLTRB(8, 16, 8, 0),
+      content: SizedBox(
+        width: 320,
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            CalendarDatePicker(
+              initialDate: _selectedDate,
+              firstDate: DateTime(now.year, now.month, now.day),
+              lastDate: DateTime(now.year + 5),
+              onDateChanged: (d) => setState(() => _selectedDate = d),
+            ),
+            const Divider(height: 1),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  const Text('Uhrzeit',
+                      style: TextStyle(fontWeight: FontWeight.w500)),
+                  const SizedBox(width: 16),
+                  _TimeField(controller: _hourCtrl, hint: 'hh', max: 23,
+                      onChanged: (_) => setState(() {})),
+                  const Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 6),
+                    child: Text(':',
+                        style: TextStyle(
+                            fontSize: 22, fontWeight: FontWeight.bold)),
+                  ),
+                  _TimeField(controller: _minCtrl, hint: 'mm', max: 59,
+                      onChanged: (_) => setState(() {})),
+                  const SizedBox(width: 8),
+                  const Text('Uhr'),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.pop(context),
+          child: const Text('Abbrechen'),
+        ),
+        FilledButton(
+          onPressed: _valid ? _confirm : null,
+          child: const Text('Speichern'),
+        ),
+      ],
+    );
+  }
+}
+
+class _TimeField extends StatelessWidget {
+  final TextEditingController controller;
+  final String hint;
+  final int max;
+  final ValueChanged<String> onChanged;
+
+  const _TimeField({
+    required this.controller,
+    required this.hint,
+    required this.max,
+    required this.onChanged,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 52,
+      child: TextField(
+        controller: controller,
+        keyboardType: TextInputType.number,
+        textAlign: TextAlign.center,
+        maxLength: 2,
+        onChanged: onChanged,
+        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+        decoration: InputDecoration(
+          hintText: hint,
+          counterText: '',
+          contentPadding:
+              const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
+          border: const OutlineInputBorder(),
+        ),
+      ),
+    );
   }
 }
