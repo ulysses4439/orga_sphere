@@ -35,6 +35,9 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
       // Subscribe BEFORE start() so we don't miss the initial check event.
       _reminderSub = _reminderService.onReminderDue.listen(_onReminderDue);
       _reminderService.start();
+      // Auto-select first orbit (no "Alle Spheres" anymore).
+      final domains = _taskService.getDomains();
+      if (domains.isNotEmpty) _selectedOrbitId = domains.first.id;
       setState(() {});
     });
   }
@@ -160,13 +163,6 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
         toolbarHeight: 64,
         centerTitle: true,
         title: Image.asset('assets/images/logo_full.png', height: 52, fit: BoxFit.contain),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.add),
-            tooltip: 'Neu erstellen',
-            onPressed: _showCreateMenu,
-          ),
-        ],
       ),
       body: FutureBuilder<void>(
         future: _taskService.ready,
@@ -220,18 +216,33 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
                   ),
             ),
           ),
-          _buildOrbitTile(null, 'Alle Spheres', null),
-          const Divider(height: 8, indent: 16, endIndent: 16),
+          // Orbit list + missed reminders share the available space.
           Expanded(
-            child: ListView.builder(
-              itemCount: domains.length,
-              itemBuilder: (_, i) {
-                final d = domains[i];
-                return _buildOrbitTile(d.id, d.name, d.color);
-              },
+            child: Column(
+              children: [
+                Expanded(
+                  child: ListView.builder(
+                    itemCount: domains.length,
+                    itemBuilder: (_, i) {
+                      final d = domains[i];
+                      return _buildOrbitTile(d.id, d.name, d.color);
+                    },
+                  ),
+                ),
+                if (missed.isNotEmpty) _buildMissedRemindersSection(missed),
+              ],
             ),
           ),
-          if (missed.isNotEmpty) _buildMissedRemindersSection(missed),
+          // Fixed "Neuer Orbit" button at the bottom – like MS To Do's "Neue Liste".
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.add),
+            title: const Text('Neuer Orbit'),
+            onTap: () async {
+              await Navigator.of(context).pushNamed('/create-domain');
+              if (mounted) setState(() {});
+            },
+          ),
         ],
       ),
     );
@@ -323,9 +334,27 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
   }
 
   Widget _buildDesktopSpherePanel() {
-    final selectedOrbitName = _selectedOrbitId != null
-        ? (_taskService.getDomainById(_selectedOrbitId!)?.name ?? 'Orbit')
-        : 'Alle Spheres';
+    if (_selectedOrbitId == null) {
+      return Center(
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(Icons.folder_open_outlined, size: 64, color: Colors.grey[300]),
+            const SizedBox(height: 16),
+            Text(
+              'Orbit auswählen',
+              style: Theme.of(context)
+                  .textTheme
+                  .titleMedium
+                  ?.copyWith(color: Colors.grey[400]),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final selectedOrbitName =
+        _taskService.getDomainById(_selectedOrbitId!)?.name ?? 'Orbit';
 
     return DefaultTabController(
       length: 2,
@@ -340,10 +369,20 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
           Expanded(
             child: TabBarView(
               children: [
-                _buildDesktopSphereList(
-                  _filtered(_taskService.getActiveTasks()),
-                  'Keine aktiven Spheres vorhanden',
+                // Aktiv: sphere list + fixed "Neue Sphere" at the bottom.
+                Column(
+                  children: [
+                    Expanded(
+                      child: _buildDesktopSphereList(
+                        _filtered(_taskService.getActiveTasks()),
+                        'Keine aktiven Spheres vorhanden',
+                      ),
+                    ),
+                    const Divider(height: 1),
+                    _buildNewSphereButton(),
+                  ],
                 ),
+                // Archiv: list only.
                 _buildDesktopSphereList(
                   _filtered(_taskService.getArchivedTasks()),
                   'Keine archivierten Spheres vorhanden',
@@ -352,6 +391,31 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
             ),
           ),
         ],
+      ),
+    );
+  }
+
+  Widget _buildNewSphereButton() {
+    return InkWell(
+      onTap: () async {
+        await Navigator.of(context).pushNamed('/create-task');
+        if (mounted) setState(() {});
+      },
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
+        child: Row(
+          children: [
+            const Icon(Icons.add, size: 20, color: AppColors.teal),
+            const SizedBox(width: 12),
+            Text(
+              'Neue Sphere hinzufügen',
+              style: Theme.of(context)
+                  .textTheme
+                  .bodyMedium
+                  ?.copyWith(color: AppColors.teal),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -408,7 +472,11 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
         },
       ),
       floatingActionButton: FloatingActionButton(
-        onPressed: _showCreateMenu,
+        onPressed: () async {
+          await Navigator.of(context).pushNamed('/create-domain');
+          if (mounted) setState(() {});
+        },
+        tooltip: 'Neuer Orbit',
         child: const Icon(Icons.add),
       ),
     );
@@ -432,13 +500,6 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
                 ),
           ),
         ),
-        ListTile(
-          leading: const Icon(Icons.all_inclusive),
-          title: const Text('Alle Spheres'),
-          trailing: const Icon(Icons.chevron_right),
-          onTap: () => _pushSphereList(null, 'Alle Spheres'),
-        ),
-        const Divider(indent: 16, endIndent: 16),
         ...domains.map(
           (d) => ListTile(
             leading: Container(
@@ -541,34 +602,4 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
     );
   }
 
-  void _showCreateMenu() {
-    showModalBottomSheet<void>(
-      context: context,
-      builder: (ctx) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.folder_outlined),
-              title: const Text('Orbit anlegen'),
-              onTap: () async {
-                Navigator.of(ctx).pop();
-                await Navigator.of(context).pushNamed('/create-domain');
-                if (mounted) setState(() {});
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.add_task),
-              title: const Text('Sphere anlegen'),
-              onTap: () async {
-                Navigator.of(ctx).pop();
-                await Navigator.of(context).pushNamed('/create-task');
-                if (mounted) setState(() {});
-              },
-            ),
-          ],
-        ),
-      ),
-    );
-  }
 }
