@@ -42,6 +42,11 @@
     * https://docs.flutter.dev/platform-integration/web/initialization
   -->
   <script>
+    // Fires the Dart reminder check every 30 s, even when Flutter is idle.
+    setInterval(function() {
+      if (typeof window._orgaCheck === 'function') window._orgaCheck();
+    }, 30000);
+
     function playChime() {
       try {
         var ctx = new (window.AudioContext || window.webkitAudioContext)();

@@ -76,7 +76,10 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
   }
 
   void _showReminderDialog(Task task) {
-    final ctx = navigatorKey.currentContext;
+    // navigatorKey.currentContext is the Navigator's OWN context – Navigator.of()
+    // would look for a Navigator ABOVE it and find none → silent failure.
+    // overlay.context is a descendant of the Navigator, so Navigator.of() works.
+    final ctx = navigatorKey.currentState?.overlay?.context;
     if (ctx == null) return;
 
     final domain = _taskService.getDomainById(task.domainId);
