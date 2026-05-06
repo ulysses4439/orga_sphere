@@ -34,7 +34,11 @@ class OrgaSphereApp extends StatelessWidget {
           case '/create-domain':
             return MaterialPageRoute(builder: (_) => const CreateDomainScreen());
           case '/create-task':
-            return MaterialPageRoute(builder: (_) => const CreateTaskScreen());
+            return MaterialPageRoute(
+              builder: (_) => CreateTaskScreen(
+                domainId: settings.arguments as String?,
+              ),
+            );
           default:
             return MaterialPageRoute(builder: (_) => const TaskListScreen());
         }

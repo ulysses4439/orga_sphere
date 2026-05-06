@@ -396,12 +396,19 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
   }
 
   Widget _buildNewSphereButton() {
+    final orbitColor = _selectedOrbitId != null
+        ? _taskService.getDomainById(_selectedOrbitId!)?.color
+        : null;
     return InkWell(
       onTap: () async {
-        await Navigator.of(context).pushNamed('/create-task');
+        await Navigator.of(context).pushNamed(
+          '/create-task',
+          arguments: _selectedOrbitId,
+        );
         if (mounted) setState(() {});
       },
-      child: Padding(
+      child: Container(
+        color: orbitColor,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
         child: Row(
           children: [

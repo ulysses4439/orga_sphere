@@ -4,7 +4,8 @@ import '../services/task_service.dart';
 import '../widgets/reminder_picker_dialog.dart';
 
 class CreateTaskScreen extends StatefulWidget {
-  const CreateTaskScreen({super.key});
+  final String? domainId;
+  const CreateTaskScreen({super.key, this.domainId});
 
   @override
   State<CreateTaskScreen> createState() => _CreateTaskScreenState();
@@ -15,7 +16,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
   final _titleController = TextEditingController();
   final _descController = TextEditingController();
 
-  String? _selectedDomainId;
+  late String? _selectedDomainId = widget.domainId;
   DateTime _startDate = DateTime.now();
   DateTime _dueDate = DateTime.now().add(const Duration(days: 7));
   DateTime? _reminderAt;
@@ -101,8 +102,6 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final domains = _taskService.getDomains();
-
     return Scaffold(
       appBar: AppBar(title: const Text('Sphere anlegen')),
       body: _saving
@@ -112,19 +111,6 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
               child: ListView(
                 padding: const EdgeInsets.all(16),
                 children: [
-                  DropdownButtonFormField<String>(
-                    initialValue: _selectedDomainId,
-                    decoration: const InputDecoration(
-                      labelText: 'Orbit *',
-                      border: OutlineInputBorder(),
-                    ),
-                    items: domains
-                        .map((d) => DropdownMenuItem(value: d.id, child: Text(d.name)))
-                        .toList(),
-                    onChanged: (v) => setState(() => _selectedDomainId = v),
-                    validator: (v) => v == null ? 'Orbit ist erforderlich' : null,
-                  ),
-                  const SizedBox(height: 16),
                   TextFormField(
                     controller: _titleController,
                     decoration: const InputDecoration(
@@ -228,7 +214,7 @@ class _DateTile extends StatelessWidget {
         decoration: InputDecoration(
           labelText: label,
           border: const OutlineInputBorder(),
-          suffixIcon: const Icon(Icons.calendar_today),
+          prefixIcon: const Icon(Icons.calendar_today),
         ),
         child: Text(_formatted),
       ),
@@ -266,13 +252,14 @@ class _ReminderTile extends StatelessWidget {
         decoration: InputDecoration(
           labelText: 'Erinnerung',
           border: const OutlineInputBorder(),
+          prefixIcon: const Icon(Icons.notifications_outlined),
           suffixIcon: reminderAt != null
               ? IconButton(
                   icon: const Icon(Icons.close),
                   onPressed: onClear,
                   tooltip: 'Erinnerung entfernen',
                 )
-              : const Icon(Icons.notifications_outlined),
+              : null,
         ),
         child: Text(
           reminderAt != null ? _formatted(reminderAt!) : 'Keine Erinnerung',

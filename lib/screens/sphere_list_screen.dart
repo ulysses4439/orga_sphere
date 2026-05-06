@@ -52,7 +52,7 @@ class _SphereListScreenState extends State<SphereListScreen> {
         ),
         floatingActionButton: FloatingActionButton(
           onPressed: () async {
-            await Navigator.of(context).pushNamed('/create-task');
+            await Navigator.of(context).pushNamed('/create-task', arguments: widget.orbitId);
             setState(() {});
           },
           child: const Icon(Icons.add),
