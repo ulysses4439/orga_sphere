@@ -200,50 +200,58 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
     final domains = _taskService.getDomains();
     final missed = _reminderService.getMissedReminders();
 
-    return SizedBox(
+    return Container(
       width: 240,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
-            child: Text(
-              'Orbits',
-              style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                    color: AppColors.navy,
-                    fontWeight: FontWeight.w700,
-                    letterSpacing: 1.4,
-                  ),
+      color: Colors.black,
+      child: Theme(
+        data: Theme.of(context).copyWith(
+          listTileTheme: const ListTileThemeData(
+            textColor: Colors.white,
+            iconColor: Colors.white70,
+            selectedColor: Colors.white,
+            selectedTileColor: Color(0xFF1C1C2E),
+          ),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+              child: Text(
+                'Orbits',
+                style: Theme.of(context).textTheme.titleLarge?.copyWith(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w700,
+                    ),
+              ),
             ),
-          ),
-          // Orbit list + missed reminders share the available space.
-          Expanded(
-            child: Column(
-              children: [
-                Expanded(
-                  child: ListView.builder(
-                    itemCount: domains.length,
-                    itemBuilder: (_, i) {
-                      final d = domains[i];
-                      return _buildOrbitTile(d.id, d.name, d.color);
-                    },
+            Expanded(
+              child: Column(
+                children: [
+                  Expanded(
+                    child: ListView.builder(
+                      itemCount: domains.length,
+                      itemBuilder: (_, i) {
+                        final d = domains[i];
+                        return _buildOrbitTile(d.id, d.name, d.color);
+                      },
+                    ),
                   ),
-                ),
-                if (missed.isNotEmpty) _buildMissedRemindersSection(missed),
-              ],
+                  if (missed.isNotEmpty) _buildMissedRemindersSection(missed),
+                ],
+              ),
             ),
-          ),
-          // Fixed "Neuer Orbit" button at the bottom – like MS To Do's "Neue Liste".
-          const Divider(height: 1),
-          ListTile(
-            leading: const Icon(Icons.add),
-            title: const Text('Neuer Orbit'),
-            onTap: () async {
-              await Navigator.of(context).pushNamed('/create-domain');
-              if (mounted) setState(() {});
-            },
-          ),
-        ],
+            const Divider(height: 1),
+            ListTile(
+              leading: const Icon(Icons.add),
+              title: const Text('Neuer Orbit'),
+              onTap: () async {
+                await Navigator.of(context).pushNamed('/create-domain');
+                if (mounted) setState(() {});
+              },
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -284,7 +292,7 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
         task.title,
         maxLines: 1,
         overflow: TextOverflow.ellipsis,
-        style: Theme.of(context).textTheme.bodySmall,
+        style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.white),
       ),
       subtitle: Text(
         _formatDateTime(task.reminderAt!.toLocal()),
@@ -318,7 +326,7 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
     final isSelected = _selectedOrbitId == id;
     return ListTile(
       selected: isSelected,
-      selectedTileColor: AppColors.navyPale,
+      selectedTileColor: const Color(0xFF1C1C2E),
       contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
       leading: color != null
           ? Container(
@@ -329,7 +337,10 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
           : const SizedBox(width: 12),
       title: Text(
         name,
-        style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal),
+        style: TextStyle(
+          color: Colors.white,
+          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+        ),
       ),
       onTap: () => setState(() {
         _selectedOrbitId = id;
@@ -340,20 +351,23 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
 
   Widget _buildDesktopSpherePanel() {
     if (_selectedOrbitId == null) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.folder_open_outlined, size: 64, color: Colors.grey[300]),
-            const SizedBox(height: 16),
-            Text(
-              'Orbit auswählen',
-              style: Theme.of(context)
-                  .textTheme
-                  .titleMedium
-                  ?.copyWith(color: Colors.grey[400]),
-            ),
-          ],
+      return Container(
+        color: Colors.black,
+        child: Center(
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(Icons.folder_open_outlined, size: 64, color: Colors.grey[700]),
+              const SizedBox(height: 16),
+              Text(
+                'Orbit auswählen',
+                style: Theme.of(context)
+                    .textTheme
+                    .titleMedium
+                    ?.copyWith(color: Colors.grey[600]),
+              ),
+            ],
+          ),
         ),
       );
     }
@@ -361,41 +375,59 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
     final selectedOrbitName =
         _taskService.getDomainById(_selectedOrbitId!)?.name ?? 'Orbit';
 
-    return DefaultTabController(
-      length: 2,
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Padding(
-            padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-            child: Text(selectedOrbitName, style: Theme.of(context).textTheme.titleLarge),
+    return Container(
+      color: Colors.black,
+      child: Theme(
+        data: Theme.of(context).copyWith(
+          tabBarTheme: const TabBarThemeData(
+            labelColor: Colors.white,
+            unselectedLabelColor: Colors.white54,
+            indicatorColor: AppColors.teal,
+            dividerColor: Colors.transparent,
           ),
-          const TabBar(tabs: [Tab(text: 'Aktiv'), Tab(text: 'Archiv')]),
-          Expanded(
-            child: TabBarView(
-              children: [
-                // Aktiv: sphere list + fixed "Neue Sphere" at the bottom.
-                Column(
+        ),
+        child: DefaultTabController(
+          length: 2,
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                child: Text(
+                  selectedOrbitName,
+                  textAlign: TextAlign.center,
+                  style: Theme.of(context)
+                      .textTheme
+                      .titleLarge
+                      ?.copyWith(color: Colors.white),
+                ),
+              ),
+              const TabBar(tabs: [Tab(text: 'Im Flug'), Tab(text: 'Gelandet')]),
+              Expanded(
+                child: TabBarView(
                   children: [
-                    Expanded(
-                      child: _buildDesktopSphereList(
-                        _filtered(_taskService.getActiveTasks()),
-                        'Keine aktiven Spheres vorhanden',
-                      ),
+                    Column(
+                      children: [
+                        Expanded(
+                          child: _buildDesktopSphereList(
+                            _filtered(_taskService.getActiveTasks()),
+                            'Keine aktiven Spheres vorhanden',
+                          ),
+                        ),
+                        const Divider(height: 1),
+                        _buildNewSphereButton(),
+                      ],
                     ),
-                    const Divider(height: 1),
-                    _buildNewSphereButton(),
+                    _buildDesktopSphereList(
+                      _filtered(_taskService.getArchivedTasks()),
+                      'Keine gelandeten Spheres vorhanden',
+                    ),
                   ],
                 ),
-                // Archiv: list only.
-                _buildDesktopSphereList(
-                  _filtered(_taskService.getArchivedTasks()),
-                  'Keine archivierten Spheres vorhanden',
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -438,9 +470,15 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.task_alt, size: 64, color: Colors.grey[400]),
+            Icon(Icons.task_alt, size: 64, color: Colors.grey[700]),
             const SizedBox(height: 16),
-            Text(emptyMessage, style: Theme.of(context).textTheme.titleLarge),
+            Text(
+              emptyMessage,
+              style: Theme.of(context)
+                  .textTheme
+                  .titleLarge
+                  ?.copyWith(color: Colors.grey[600]),
+            ),
           ],
         ),
       );
