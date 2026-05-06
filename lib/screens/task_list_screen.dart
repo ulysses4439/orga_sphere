@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'package:flutter/material.dart';
+import '../app_globals.dart';
 import '../models/models.dart';
 import '../services/task_service.dart';
 import '../services/reminder_service.dart';
@@ -70,20 +71,21 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
   void _onReminderDue(ReminderEvent event) {
     _reminderService.markShown(event.task.id);
     SoundService.playChime();
-    if (mounted) {
-      setState(() {}); // rebuild sidebar so task appears there too if dialog is dismissed
-      _showReminderDialog(event.task);
-    }
+    _showReminderDialog(event.task); // navigatorKey – independent of mount state
+    if (mounted) setState(() {}); // rebuild sidebar
   }
 
   void _showReminderDialog(Task task) {
+    final ctx = navigatorKey.currentContext;
+    if (ctx == null) return;
+
     final domain = _taskService.getDomainById(task.domainId);
     final reminderStr = task.reminderAt != null
         ? _formatDateTime(task.reminderAt!.toLocal())
         : '';
 
     showDialog<void>(
-      context: context,
+      context: ctx,
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         icon: const Icon(Icons.notifications_active, color: AppColors.teal, size: 32),

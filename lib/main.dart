@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'app_globals.dart';
 import 'screens/screens.dart';
 import 'theme/app_theme.dart';
 
@@ -13,6 +14,7 @@ class OrgaSphereApp extends StatelessWidget {
   Widget build(BuildContext context) {
     return MaterialApp(
       title: 'OrgaSphere',
+      navigatorKey: navigatorKey,
       theme: AppTheme.light,
       onGenerateRoute: (settings) {
         switch (settings.name) {
