@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/task_service.dart';
 import '../services/reminder_service.dart';
+import '../services/sound_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/task_list_item.dart';
 import '../widgets/sphere_detail_content.dart';
@@ -30,10 +31,9 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
     WidgetsBinding.instance.addObserver(this);
     _taskService.ready.then((_) {
       if (!mounted) return;
-      _reminderService.start();
+      // Subscribe BEFORE start() so we don't miss the initial check event.
       _reminderSub = _reminderService.onReminderDue.listen(_onReminderDue);
-      // Show missed reminders after short delay so UI is fully built
-      Future.delayed(const Duration(seconds: 2), _checkMissedReminders);
+      _reminderService.start();
       setState(() {});
     });
   }
@@ -69,12 +69,11 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
 
   void _onReminderDue(ReminderEvent event) {
     _reminderService.markShown(event.task.id);
-    if (mounted) _showReminderDialog(event.task);
-  }
-
-  void _checkMissedReminders() {
-    final missed = _reminderService.getMissedReminders();
-    if (missed.isNotEmpty && mounted) setState(() {});
+    SoundService.playChime();
+    if (mounted) {
+      setState(() {}); // rebuild sidebar so task appears there too if dialog is dismissed
+      _showReminderDialog(event.task);
+    }
   }
 
   void _showReminderDialog(Task task) {
@@ -120,9 +119,10 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
             child: const Text('Erinnerung löschen'),
           ),
           FilledButton(
-            onPressed: () {
+            onPressed: () async {
               Navigator.pop(ctx);
-              setState(() => _selectedSphereId = task.id);
+              await _taskService.setReminder(task.id, null);
+              if (mounted) setState(() => _selectedSphereId = task.id);
             },
             child: const Text('Sphere öffnen'),
           ),
@@ -284,9 +284,10 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
           if (mounted) setState(() {});
         },
       ),
-      onTap: () {
+      onTap: () async {
         _reminderService.markShown(task.id);
-        setState(() => _selectedSphereId = task.id);
+        await _taskService.setReminder(task.id, null);
+        if (mounted) setState(() => _selectedSphereId = task.id);
       },
     );
   }
@@ -490,10 +491,13 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
                   if (mounted) setState(() {});
                 },
               ),
-              onTap: () {
+              onTap: () async {
                 _reminderService.markShown(task.id);
-                final domain = _taskService.getDomainById(task.domainId);
-                _pushSphereList(task.domainId, domain?.name ?? 'Orbit');
+                await _taskService.setReminder(task.id, null);
+                if (mounted) {
+                  final domain = _taskService.getDomainById(task.domainId);
+                  _pushSphereList(task.domainId, domain?.name ?? 'Orbit');
+                }
               },
             ),
           ),

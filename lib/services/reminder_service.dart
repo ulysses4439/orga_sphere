@@ -8,8 +8,9 @@ class ReminderEvent {
   ReminderEvent(this.task);
 }
 
-/// Checks reminders every minute and exposes a stream of due events.
-/// Also detects reminders that fired while the app was closed (missed).
+/// Checks reminders every 30 seconds and exposes a stream of due events.
+/// Reminders that were already past when start() was called appear only in
+/// the sidebar (missed); reminders that become due afterwards trigger a dialog.
 class ReminderService {
   static final ReminderService _instance = ReminderService._internal();
   factory ReminderService() => _instance;
@@ -19,13 +20,16 @@ class ReminderService {
   final _controller = StreamController<ReminderEvent>.broadcast();
   final _notifiedIds = <String>{};
   Timer? _timer;
+  DateTime? _startedAt;
 
   Stream<ReminderEvent> get onReminderDue => _controller.stream;
 
   void start() {
     if (_timer != null) return;
-    _check(); // sofortiger Check beim Start, nicht erst nach 1 Minute
-    _timer = Timer.periodic(const Duration(minutes: 1), (_) => _check());
+    _startedAt = DateTime.now();
+    // Delay the first check by 100ms so the caller can attach a listener first.
+    Future.delayed(const Duration(milliseconds: 100), _check);
+    _timer = Timer.periodic(const Duration(seconds: 30), (_) => _check());
   }
 
   void stop() {
@@ -33,7 +37,7 @@ class ReminderService {
     _timer = null;
   }
 
-  /// Manuell auslösen – z.B. wenn Tab wieder aktiv wird.
+  /// Call when the tab/app regains focus.
   void checkNow() => _check();
 
   void _check() {
@@ -44,23 +48,25 @@ class ReminderService {
       if (reminder.isAfter(now)) continue;
       if (_notifiedIds.contains(task.id)) continue;
       _notifiedIds.add(task.id);
-      _controller.add(ReminderEvent(task));
+      // Dialog only for reminders that became due AFTER the app started.
+      // Older reminders (app was closed) appear silently in the sidebar.
+      final isLive = _startedAt != null && reminder.isAfter(_startedAt!);
+      if (isLive) {
+        _controller.add(ReminderEvent(task));
+      }
     }
   }
 
-  /// Tasks whose reminder time has passed but were never shown in this session.
+  /// All reminders whose time has already passed (for sidebar display).
   List<Task> getMissedReminders() {
     final now = DateTime.now();
     return _taskService
         .getTasks()
-        .where((t) =>
-            t.reminderAt != null &&
-            t.reminderAt!.isBefore(now) &&
-            !_notifiedIds.contains(t.id))
+        .where((t) => t.reminderAt != null && t.reminderAt!.isBefore(now))
         .toList()
       ..sort((a, b) => a.reminderAt!.compareTo(b.reminderAt!));
   }
 
-  /// Call after showing a reminder so it is not re-shown in this session.
+  /// Prevents re-dialog for this task in the current session.
   void markShown(String taskId) => _notifiedIds.add(taskId);
 }
