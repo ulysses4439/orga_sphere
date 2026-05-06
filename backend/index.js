@@ -246,6 +246,25 @@ app.patch('/tasks/:id/reopen', async (req, res) => {
   }
 });
 
+// Set or clear orbit-wide reminder for a task
+app.patch('/tasks/:id/reminder', async (req, res) => {
+  const { id } = req.params;
+  const { reminderAt } = req.body;
+  try {
+    const p = await getPool();
+    const result = await p.request()
+      .input('id',         sql.NVarChar,  id)
+      .input('reminderAt', sql.DateTime2, reminderAt ? new Date(reminderAt) : null)
+      .query('UPDATE Task SET reminderAt = @reminderAt WHERE id = @id');
+    if (result.rowsAffected[0] === 0) {
+      return res.status(404).json({ error: 'Task not found' });
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Delete a task and its log entries
 app.delete('/tasks/:id', async (req, res) => {
   const { id } = req.params;

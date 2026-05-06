@@ -20,6 +20,7 @@ CREATE TABLE Task (
     status NVARCHAR(50) NOT NULL DEFAULT 'open',
     createdAt DATETIME2 DEFAULT GETUTCDATE(),
     completedAt DATETIME2,
+    reminderAt DATETIME2,
     previousTaskId NVARCHAR(100),
     FOREIGN KEY (domainId) REFERENCES TaskDomain(id),
     FOREIGN KEY (previousTaskId) REFERENCES Task(id)
