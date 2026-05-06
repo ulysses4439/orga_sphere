@@ -23,13 +23,18 @@ class ReminderService {
   Stream<ReminderEvent> get onReminderDue => _controller.stream;
 
   void start() {
-    _timer ??= Timer.periodic(const Duration(minutes: 1), (_) => _check());
+    if (_timer != null) return;
+    _check(); // sofortiger Check beim Start, nicht erst nach 1 Minute
+    _timer = Timer.periodic(const Duration(minutes: 1), (_) => _check());
   }
 
   void stop() {
     _timer?.cancel();
     _timer = null;
   }
+
+  /// Manuell auslösen – z.B. wenn Tab wieder aktiv wird.
+  void checkNow() => _check();
 
   void _check() {
     final now = DateTime.now();

@@ -116,6 +116,10 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
       context: context,
       initialTime: TimeOfDay.fromDateTime(initial),
       helpText: 'Erinnerungszeit wählen',
+      builder: (context, child) => MediaQuery(
+        data: MediaQuery.of(context).copyWith(alwaysUse24HourFormat: true),
+        child: child!,
+      ),
     );
     if (time == null || !mounted) return;
 

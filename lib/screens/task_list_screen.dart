@@ -14,7 +14,7 @@ class TaskListScreen extends StatefulWidget {
   State<TaskListScreen> createState() => _TaskListScreenState();
 }
 
-class _TaskListScreenState extends State<TaskListScreen> {
+class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObserver {
   final TaskService _taskService = TaskService();
   final ReminderService _reminderService = ReminderService();
   StreamSubscription<ReminderEvent>? _reminderSub;
@@ -27,6 +27,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _taskService.ready.then((_) {
       if (!mounted) return;
       _reminderService.start();
@@ -39,9 +40,20 @@ class _TaskListScreenState extends State<TaskListScreen> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _reminderSub?.cancel();
     _reminderService.stop();
     super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // Feuert auf Mobile wenn App in Vordergrund kommt;
+    // auf Web zusätzlich wenn Tab wieder fokussiert wird.
+    if (state == AppLifecycleState.resumed) {
+      _reminderService.checkNow();
+      if (mounted) setState(() {});
+    }
   }
 
   bool get _isDesktop => MediaQuery.of(context).size.width >= _desktopBreakpoint;
