@@ -136,6 +136,12 @@ class TaskService {
     }
   }
 
+  Future<void> setReminder(String taskId, DateTime? reminderAt) async {
+    await ApiService.setReminder(taskId, reminderAt);
+    final task = getTaskById(taskId);
+    if (task != null) task.reminderAt = reminderAt;
+  }
+
   Future<TaskDomain> createDomain(String name, String description, String color) async {
     final domain = await ApiService.createDomain(name, description, color);
     _domains.add(domain);

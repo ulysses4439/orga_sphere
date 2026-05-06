@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/task_service.dart';
 import '../theme/app_colors.dart';
+import '../widgets/task_list_item.dart';
+import '../widgets/sphere_detail_content.dart';
 
 class TaskListScreen extends StatefulWidget {
   const TaskListScreen({super.key});
@@ -12,138 +14,306 @@ class TaskListScreen extends StatefulWidget {
 
 class _TaskListScreenState extends State<TaskListScreen> {
   final TaskService _taskService = TaskService();
-  String? _selectedDomainId;
-  bool _isReady = false;
+  String? _selectedOrbitId;
+  String? _selectedSphereId;
+
+  static const double _desktopBreakpoint = 800;
 
   @override
   void initState() {
     super.initState();
-    _taskService.ready.then((_) => setState(() => _isReady = true));
+    _taskService.ready.then((_) {
+      if (mounted) setState(() {});
+    });
   }
 
+  bool get _isDesktop => MediaQuery.of(context).size.width >= _desktopBreakpoint;
+
   List<Task> _filtered(List<Task> tasks) {
-    if (_selectedDomainId == null) return tasks;
-    return tasks.where((t) => t.domainId == _selectedDomainId).toList();
+    if (_selectedOrbitId == null) return tasks;
+    return tasks.where((t) => t.domainId == _selectedOrbitId).toList();
   }
 
   @override
   Widget build(BuildContext context) {
-    return DefaultTabController(
-      length: 2,
-      child: Scaffold(
-        appBar: AppBar(
-          toolbarHeight: 64,
-          centerTitle: true,
-          title: Image.asset(
-            'assets/images/logo_full.png',
-            height: 52,
-            fit: BoxFit.contain,
+    return _isDesktop ? _buildDesktopLayout() : _buildMobileLayout();
+  }
+
+  // ──────────────────────────────────────────────
+  // DESKTOP
+  // ──────────────────────────────────────────────
+
+  Widget _buildDesktopLayout() {
+    return Scaffold(
+      appBar: AppBar(
+        toolbarHeight: 64,
+        centerTitle: true,
+        title: Image.asset('assets/images/logo_full.png', height: 52, fit: BoxFit.contain),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.add),
+            tooltip: 'Neu erstellen',
+            onPressed: _showCreateMenu,
           ),
-          bottom: PreferredSize(
-            preferredSize: Size.fromHeight(
-              (_isReady ? 72.0 : 0.0) + kTextTabBarHeight,
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                if (_isReady) _buildFilterBar(),
-                const TabBar(
-                  tabs: [
-                    Tab(text: 'Aktiv'),
-                    Tab(text: 'Archiv'),
-                  ],
+        ],
+      ),
+      body: FutureBuilder<void>(
+        future: _taskService.ready,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return _buildErrorView(snapshot.error);
+          }
+          return Row(
+            children: [
+              _buildOrbitSidebar(),
+              const VerticalDivider(width: 1, thickness: 1),
+              Expanded(child: _buildDesktopSpherePanel()),
+              if (_selectedSphereId != null) ...[
+                const VerticalDivider(width: 1, thickness: 1),
+                SizedBox(
+                  width: 420,
+                  child: SphereDetailContent(
+                    key: ValueKey(_selectedSphereId),
+                    taskId: _selectedSphereId!,
+                    onDeleted: () => setState(() => _selectedSphereId = null),
+                    onClose: () => setState(() => _selectedSphereId = null),
+                  ),
                 ),
               ],
-            ),
-          ),
-        ),
-        body: FutureBuilder<void>(
-          future: _taskService.ready,
-          builder: (context, snapshot) {
-            if (snapshot.connectionState != ConnectionState.done) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            if (snapshot.hasError) {
-              return Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    const Icon(Icons.cloud_off, size: 64, color: Colors.red),
-                    const SizedBox(height: 16),
-                    Text(
-                      'Verbindungsfehler',
-                      style: Theme.of(context).textTheme.titleLarge,
-                    ),
-                    const SizedBox(height: 8),
-                    Text(
-                      '${snapshot.error}',
-                      style: Theme.of(context).textTheme.bodySmall,
-                      textAlign: TextAlign.center,
-                    ),
-                  ],
-                ),
-              );
-            }
-            return TabBarView(
-              children: [
-                _buildTaskList(
-                  _filtered(_taskService.getActiveTasks()),
-                  'Keine aktiven Spheres vorhanden',
-                ),
-                _buildTaskList(
-                  _filtered(_taskService.getArchivedTasks()),
-                  'Keine archivierten Spheres vorhanden',
-                ),
-              ],
-            );
-          },
-        ),
-        floatingActionButton: FloatingActionButton(
-          onPressed: _showCreateMenu,
-          child: const Icon(Icons.add),
-        ),
+            ],
+          );
+        },
       ),
     );
   }
 
-  Widget _buildFilterBar() {
+  Widget _buildOrbitSidebar() {
     final domains = _taskService.getDomains();
-    final foreground = Theme.of(context).appBarTheme.foregroundColor;
-    final labelStyle = Theme.of(context).textTheme.labelLarge?.copyWith(
-          color: foreground?.withValues(alpha: 0.8),
-          letterSpacing: 1.2,
-          fontWeight: FontWeight.w700,
-        );
-    return Center(
-      child: SingleChildScrollView(
-        scrollDirection: Axis.horizontal,
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-        child: Row(
+    return SizedBox(
+      width: 240,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+            child: Text(
+              'Orbits',
+              style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                    color: AppColors.navy,
+                    fontWeight: FontWeight.w700,
+                    letterSpacing: 1.4,
+                  ),
+            ),
+          ),
+          _buildOrbitTile(null, 'Alle Spheres', null),
+          const Divider(height: 8, indent: 16, endIndent: 16),
+          Expanded(
+            child: ListView.builder(
+              itemCount: domains.length,
+              itemBuilder: (_, i) {
+                final d = domains[i];
+                return _buildOrbitTile(d.id, d.name, d.color);
+              },
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildOrbitTile(String? id, String name, Color? color) {
+    final isSelected = _selectedOrbitId == id;
+    return ListTile(
+      selected: isSelected,
+      selectedTileColor: AppColors.navyPale,
+      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
+      leading: color != null
+          ? Container(
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
+            )
+          : const SizedBox(width: 12),
+      title: Text(
+        name,
+        style: TextStyle(fontWeight: isSelected ? FontWeight.bold : FontWeight.normal),
+      ),
+      onTap: () => setState(() {
+        _selectedOrbitId = id;
+        _selectedSphereId = null;
+      }),
+    );
+  }
+
+  Widget _buildDesktopSpherePanel() {
+    final selectedOrbitName = _selectedOrbitId != null
+        ? (_taskService.getDomainById(_selectedOrbitId!)?.name ?? 'Orbit')
+        : 'Alle Spheres';
+
+    return DefaultTabController(
+      length: 2,
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+            child: Text(
+              selectedOrbitName,
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+          ),
+          const TabBar(
+            tabs: [Tab(text: 'Aktiv'), Tab(text: 'Archiv')],
+          ),
+          Expanded(
+            child: TabBarView(
+              children: [
+                _buildDesktopSphereList(
+                  _filtered(_taskService.getActiveTasks()),
+                  'Keine aktiven Spheres vorhanden',
+                ),
+                _buildDesktopSphereList(
+                  _filtered(_taskService.getArchivedTasks()),
+                  'Keine archivierten Spheres vorhanden',
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildDesktopSphereList(List<Task> tasks, String emptyMessage) {
+    if (tasks.isEmpty) {
+      return Center(
+        child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Text('Orbits', style: labelStyle),
-            const SizedBox(width: 10),
-            ChoiceChip(
-              label: const Text('Alle'),
-              selected: _selectedDomainId == null,
-              onSelected: (_) => setState(() => _selectedDomainId = null),
-              visualDensity: VisualDensity.compact,
-            ),
-            ...domains.map((d) => Padding(
-              padding: const EdgeInsets.only(left: 6),
-              child: ChoiceChip(
-                label: Text(d.name),
-                selected: _selectedDomainId == d.id,
-                selectedColor: d.color,
-                onSelected: (_) => setState(
-                  () => _selectedDomainId =
-                      _selectedDomainId == d.id ? null : d.id,
-                ),
-                visualDensity: VisualDensity.compact,
-              ),
-            )),
+            Icon(Icons.task_alt, size: 64, color: Colors.grey[400]),
+            const SizedBox(height: 16),
+            Text(emptyMessage, style: Theme.of(context).textTheme.titleLarge),
           ],
         ),
+      );
+    }
+
+    return ListView.builder(
+      padding: const EdgeInsets.symmetric(vertical: 8),
+      itemCount: tasks.length,
+      itemBuilder: (context, index) {
+        final task = tasks[index];
+        final domain = _taskService.getDomainById(task.domainId);
+        return TaskListItem(
+          task: task,
+          domainName: domain?.name ?? 'Allgemein',
+          domainColor: domain?.color,
+          isSelected: task.id == _selectedSphereId,
+          onTap: () => setState(() => _selectedSphereId = task.id),
+        );
+      },
+    );
+  }
+
+  // ──────────────────────────────────────────────
+  // MOBILE
+  // ──────────────────────────────────────────────
+
+  Widget _buildMobileLayout() {
+    return Scaffold(
+      appBar: AppBar(
+        toolbarHeight: 64,
+        centerTitle: true,
+        title: Image.asset('assets/images/logo_full.png', height: 52, fit: BoxFit.contain),
+      ),
+      body: FutureBuilder<void>(
+        future: _taskService.ready,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const Center(child: CircularProgressIndicator());
+          }
+          if (snapshot.hasError) {
+            return _buildErrorView(snapshot.error);
+          }
+          return _buildMobileOrbitList();
+        },
+      ),
+      floatingActionButton: FloatingActionButton(
+        onPressed: _showCreateMenu,
+        child: const Icon(Icons.add),
+      ),
+    );
+  }
+
+  Widget _buildMobileOrbitList() {
+    final domains = _taskService.getDomains();
+    return ListView(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+          child: Text(
+            'Orbits',
+            style: Theme.of(context).textTheme.labelLarge?.copyWith(
+                  color: AppColors.navy,
+                  fontWeight: FontWeight.w700,
+                  letterSpacing: 1.4,
+                ),
+          ),
+        ),
+        ListTile(
+          leading: const Icon(Icons.all_inclusive),
+          title: const Text('Alle Spheres'),
+          trailing: const Icon(Icons.chevron_right),
+          onTap: () => _pushSphereList(null, 'Alle Spheres'),
+        ),
+        const Divider(indent: 16, endIndent: 16),
+        ...domains.map(
+          (d) => ListTile(
+            leading: Container(
+              width: 16,
+              height: 16,
+              decoration: BoxDecoration(color: d.color, shape: BoxShape.circle),
+            ),
+            title: Text(d.name),
+            subtitle: d.description.isNotEmpty ? Text(d.description) : null,
+            trailing: const Icon(Icons.chevron_right),
+            onTap: () => _pushSphereList(d.id, d.name),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _pushSphereList(String? orbitId, String orbitName) async {
+    await Navigator.of(context).pushNamed(
+      '/sphere-list',
+      arguments: {'orbitId': orbitId, 'orbitName': orbitName},
+    );
+    if (mounted) setState(() {});
+  }
+
+  // ──────────────────────────────────────────────
+  // SHARED
+  // ──────────────────────────────────────────────
+
+  Widget _buildErrorView(Object? error) {
+    return Center(
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          const Icon(Icons.cloud_off, size: 64, color: Colors.red),
+          const SizedBox(height: 16),
+          Text('Verbindungsfehler', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 8),
+          Text(
+            '$error',
+            style: Theme.of(context).textTheme.bodySmall,
+            textAlign: TextAlign.center,
+          ),
+        ],
       ),
     );
   }
@@ -161,7 +331,7 @@ class _TaskListScreenState extends State<TaskListScreen> {
               onTap: () async {
                 Navigator.of(ctx).pop();
                 await Navigator.of(context).pushNamed('/create-domain');
-                setState(() {});
+                if (mounted) setState(() {});
               },
             ),
             ListTile(
@@ -170,168 +340,12 @@ class _TaskListScreenState extends State<TaskListScreen> {
               onTap: () async {
                 Navigator.of(ctx).pop();
                 await Navigator.of(context).pushNamed('/create-task');
-                setState(() {});
+                if (mounted) setState(() {});
               },
             ),
           ],
         ),
       ),
     );
-  }
-
-  Widget _buildTaskList(List<Task> tasks, String emptyMessage) {
-    if (tasks.isEmpty) {
-      return Center(
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.task_alt, size: 64, color: Colors.grey[400]),
-            const SizedBox(height: 16),
-            Text(emptyMessage, style: Theme.of(context).textTheme.titleLarge),
-          ],
-        ),
-      );
-    }
-
-    return ListView.builder(
-      padding: const EdgeInsets.all(8),
-      itemCount: tasks.length,
-      itemBuilder: (context, index) {
-        final task = tasks[index];
-        final domainName = _taskService.getDomainById(task.domainId)?.name ?? 'Allgemein';
-
-        final domain = _taskService.getDomainById(task.domainId);
-        return _TaskListItem(
-          task: task,
-          domainName: domainName,
-          domainColor: domain?.color,
-          onTap: () async {
-            await Navigator.of(context).pushNamed('/task-detail', arguments: task.id);
-            setState(() {});
-          },
-        );
-      },
-    );
-  }
-}
-
-class _TaskListItem extends StatelessWidget {
-  final Task task;
-  final String domainName;
-  final Color? domainColor;
-  final VoidCallback onTap;
-
-  const _TaskListItem({
-    required this.task,
-    required this.domainName,
-    this.domainColor,
-    required this.onTap,
-  });
-
-  @override
-  Widget build(BuildContext context) {
-    final dueDate = task.dueDate;
-    final now = DateTime.now();
-    final daysUntilDue = dueDate.difference(now).inDays;
-
-    // Traffic light: urgency based on due date
-    final Color urgencyColor;
-    if (task.status == TaskStatus.done) {
-      urgencyColor = Colors.grey[400]!;
-    } else if (dueDate.isBefore(now)) {
-      urgencyColor = Colors.red;
-    } else if (daysUntilDue <= 14) {
-      urgencyColor = Colors.amber;
-    } else {
-      urgencyColor = Colors.green;
-    }
-
-    // Status icon
-    final IconData statusIcon;
-    final Color statusColor;
-    switch (task.status) {
-      case TaskStatus.open:
-        statusIcon = Icons.radio_button_unchecked;
-        statusColor = Colors.grey[600]!;
-      case TaskStatus.inProgress:
-        statusIcon = Icons.sync;
-        statusColor = AppColors.teal;
-      case TaskStatus.done:
-        statusIcon = Icons.check_circle;
-        statusColor = Colors.green;
-    }
-
-    return Card(
-      margin: const EdgeInsets.symmetric(vertical: 8, horizontal: 0),
-      color: domainColor,
-      child: ListTile(
-        onTap: onTap,
-        leading: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Icon(Icons.circle, color: urgencyColor, size: 14),
-            const SizedBox(height: 6),
-            Icon(statusIcon, color: statusColor, size: 22),
-          ],
-        ),
-        title: Text(task.title),
-        subtitle: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            const SizedBox(height: 4),
-            Text('Orbit: $domainName', style: Theme.of(context).textTheme.bodySmall),
-            const SizedBox(height: 4),
-            Text(
-              'Fällig: ${dueDate.day}. ${_monthName(dueDate.month)} ${dueDate.year}',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-            const SizedBox(height: 4),
-            Text(
-              task.recurrence.germanLabel,
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[700]),
-            ),
-            const SizedBox(height: 4),
-            Row(
-              children: [
-                Chip(
-                  label: Text(
-                    task.status.germanLabelShort,
-                    style: const TextStyle(fontSize: 12),
-                  ),
-                  backgroundColor: _statusBackgroundColor(task.status),
-                  labelStyle: const TextStyle(color: Colors.white),
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
-                ),
-                const SizedBox(width: 8),
-                if (task.logEntries.isNotEmpty)
-                  Text(
-                    '${task.logEntries.length} Einträge',
-                    style: Theme.of(context)
-                        .textTheme
-                        .bodySmall
-                        ?.copyWith(color: Colors.grey[600]),
-                  ),
-              ],
-            ),
-          ],
-        ),
-        isThreeLine: true,
-        trailing: const Icon(Icons.chevron_right),
-      ),
-    );
-  }
-
-  String _monthName(int month) {
-    const months = ['Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
-                    'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'];
-    return months[month - 1];
-  }
-
-  Color _statusBackgroundColor(TaskStatus status) {
-    switch (status) {
-      case TaskStatus.open:       return Colors.grey;
-      case TaskStatus.inProgress: return AppColors.teal;
-      case TaskStatus.done:       return Colors.green;
-    }
   }
 }

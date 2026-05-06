@@ -13,6 +13,7 @@ class Task {
   TaskStatus status;
   final DateTime createdAt;
   DateTime? completedAt;
+  DateTime? reminderAt;
   final String? previousTaskId;
   final List<TaskLogEntry> logEntries;
 
@@ -27,6 +28,7 @@ class Task {
     this.status = TaskStatus.open,
     required this.createdAt,
     this.completedAt,
+    this.reminderAt,
     this.previousTaskId,
     List<TaskLogEntry>? logEntries,
   }) : logEntries = logEntries ?? [];
@@ -53,6 +55,9 @@ class Task {
       createdAt: DateTime.parse(json['createdAt'] as String),
       completedAt: json['completedAt'] != null
           ? DateTime.parse(json['completedAt'] as String)
+          : null,
+      reminderAt: json['reminderAt'] != null
+          ? DateTime.parse(json['reminderAt'] as String)
           : null,
       previousTaskId: json['previousTaskId'] as String?,
     );

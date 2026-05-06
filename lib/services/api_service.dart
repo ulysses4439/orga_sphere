@@ -121,6 +121,15 @@ class ApiService {
     );
   }
 
+  static Future<void> setReminder(String taskId, DateTime? reminderAt) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/tasks/$taskId/reminder'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'reminderAt': reminderAt?.toUtc().toIso8601String()}),
+    );
+    _checkStatus(response);
+  }
+
   static void _checkStatus(http.Response response) {
     if (response.statusCode < 200 || response.statusCode >= 300) {
       throw Exception('API-Fehler ${response.statusCode}: ${response.body}');

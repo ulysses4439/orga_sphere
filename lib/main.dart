@@ -21,6 +21,14 @@ class OrgaSphereApp extends StatelessWidget {
           case '/task-detail':
             final taskId = settings.arguments as String;
             return MaterialPageRoute(builder: (_) => TaskDetailScreen(taskId: taskId));
+          case '/sphere-list':
+            final args = settings.arguments as Map<String, dynamic>;
+            return MaterialPageRoute(
+              builder: (_) => SphereListScreen(
+                orbitId: args['orbitId'] as String?,
+                orbitName: args['orbitName'] as String,
+              ),
+            );
           case '/create-domain':
             return MaterialPageRoute(builder: (_) => const CreateDomainScreen());
           case '/create-task':
