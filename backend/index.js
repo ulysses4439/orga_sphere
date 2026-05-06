@@ -485,7 +485,7 @@ async function runScheduler() {
   }
 }
 
-setInterval(runScheduler, 60 * 60 * 1000);
+setInterval(runScheduler, 5 * 60 * 1000);
 
 app.listen(port, () => {
   console.log(`Server running on port ${port}`);
