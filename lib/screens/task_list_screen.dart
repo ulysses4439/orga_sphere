@@ -189,6 +189,7 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
                     taskId: _selectedSphereId!,
                     onDeleted: () => setState(() => _selectedSphereId = null),
                     onClose: () => setState(() => _selectedSphereId = null),
+                    onChanged: () => setState(() {}),
                   ),
                 ),
               ],

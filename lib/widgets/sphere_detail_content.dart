@@ -9,12 +9,14 @@ class SphereDetailContent extends StatefulWidget {
   final String taskId;
   final VoidCallback? onDeleted;
   final VoidCallback? onClose;
+  final VoidCallback? onChanged;
 
   const SphereDetailContent({
     super.key,
     required this.taskId,
     this.onDeleted,
     this.onClose,
+    this.onChanged,
   });
 
   @override
@@ -132,6 +134,7 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
         _task = _taskService.getTaskById(widget.taskId);
         _isBusy = false;
       });
+      widget.onChanged?.call();
     } catch (e) {
       if (!mounted) return;
       setState(() => _isBusy = false);
@@ -148,6 +151,7 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
         _task = _taskService.getTaskById(widget.taskId);
         _isBusy = false;
       });
+      widget.onChanged?.call();
     } catch (e) {
       if (!mounted) return;
       setState(() => _isBusy = false);
