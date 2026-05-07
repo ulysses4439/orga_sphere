@@ -323,57 +323,19 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
   }
 
   Widget _buildOrbitTile(TaskDomain domain) {
-    final isSelected = _selectedOrbitId == domain.id;
-    return DragTarget<Task>(
-      onWillAcceptWithDetails: (d) => d.data.domainId != domain.id,
-      onAcceptWithDetails: (d) async {
-        await _taskService.moveTask(d.data.id, domain.id);
+    return _OrbitTile(
+      domain: domain,
+      isSelected: _selectedOrbitId == domain.id,
+      onSelect: () => setState(() {
+        _selectedOrbitId = domain.id;
+        _selectedSphereId = null;
+      }),
+      onDrop: (task) async {
+        await _taskService.moveTask(task.id, domain.id);
         if (mounted) setState(() {});
       },
-      builder: (context, candidates, _) {
-        final hovering = candidates.isNotEmpty;
-        return ListTile(
-          selected: isSelected || hovering,
-          selectedTileColor: hovering
-              ? AppColors.teal.withValues(alpha: 0.35)
-              : const Color(0xFF1C1C2E),
-          contentPadding: const EdgeInsets.only(left: 16, right: 4),
-          leading: Container(
-            width: 12,
-            height: 12,
-            decoration: BoxDecoration(color: domain.color, shape: BoxShape.circle),
-          ),
-          title: Text(
-            domain.name,
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-            ),
-          ),
-          trailing: PopupMenuButton<String>(
-            icon: const Icon(Icons.more_vert, color: Colors.white38, size: 18),
-            color: const Color(0xFF1C1C2E),
-            onSelected: (action) {
-              if (action == 'rename') _showRenameOrbitDialog(domain);
-              if (action == 'delete') _showDeleteOrbitDialog(domain);
-            },
-            itemBuilder: (_) => [
-              const PopupMenuItem(
-                value: 'rename',
-                child: Text('Umbenennen', style: TextStyle(color: Colors.white)),
-              ),
-              const PopupMenuItem(
-                value: 'delete',
-                child: Text('Löschen', style: TextStyle(color: Colors.red)),
-              ),
-            ],
-          ),
-          onTap: () => setState(() {
-            _selectedOrbitId = domain.id;
-            _selectedSphereId = null;
-          }),
-        );
-      },
+      onRename: () => _showRenameOrbitDialog(domain),
+      onDelete: () => _showDeleteOrbitDialog(domain),
     );
   }
 
@@ -834,6 +796,97 @@ class _OrbitRenameDialogState extends State<_OrbitRenameDialog> {
             child: const Text('Abbrechen')),
         FilledButton(onPressed: _submit, child: const Text('Speichern')),
       ],
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Orbit tile with reliable drag-hover detection via onMove / onLeave
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _OrbitTile extends StatefulWidget {
+  final TaskDomain domain;
+  final bool isSelected;
+  final VoidCallback onSelect;
+  final Future<void> Function(Task) onDrop;
+  final VoidCallback onRename;
+  final VoidCallback onDelete;
+
+  const _OrbitTile({
+    required this.domain,
+    required this.isSelected,
+    required this.onSelect,
+    required this.onDrop,
+    required this.onRename,
+    required this.onDelete,
+  });
+
+  @override
+  State<_OrbitTile> createState() => _OrbitTileState();
+}
+
+class _OrbitTileState extends State<_OrbitTile> {
+  bool _hovering = false;
+
+  @override
+  Widget build(BuildContext context) {
+    return DragTarget<Task>(
+      onWillAcceptWithDetails: (d) => d.data.domainId != widget.domain.id,
+      onAcceptWithDetails: (d) {
+        setState(() => _hovering = false);
+        widget.onDrop(d.data);
+      },
+      onMove: (_) { if (!_hovering) setState(() => _hovering = true); },
+      onLeave: (_) { if (_hovering) setState(() => _hovering = false); },
+      builder: (context, candidates, _) {
+        final highlight = _hovering || candidates.isNotEmpty;
+        return Container(
+          color: highlight
+              ? AppColors.teal.withValues(alpha: 0.55)
+              : widget.isSelected
+                  ? const Color(0xFF1C1C2E)
+                  : Colors.transparent,
+          child: ListTile(
+            contentPadding: const EdgeInsets.only(left: 16, right: 4),
+            leading: Container(
+              width: 12,
+              height: 12,
+              decoration: BoxDecoration(
+                  color: widget.domain.color, shape: BoxShape.circle),
+            ),
+            title: Text(
+              widget.domain.name,
+              style: TextStyle(
+                color: Colors.white,
+                fontWeight:
+                    widget.isSelected ? FontWeight.bold : FontWeight.normal,
+              ),
+            ),
+            trailing: PopupMenuButton<String>(
+              icon: const Icon(Icons.more_vert,
+                  color: Colors.white38, size: 18),
+              color: const Color(0xFF1C1C2E),
+              onSelected: (action) {
+                if (action == 'rename') widget.onRename();
+                if (action == 'delete') widget.onDelete();
+              },
+              itemBuilder: (_) => [
+                const PopupMenuItem(
+                  value: 'rename',
+                  child: Text('Umbenennen',
+                      style: TextStyle(color: Colors.white)),
+                ),
+                const PopupMenuItem(
+                  value: 'delete',
+                  child: Text('Löschen',
+                      style: TextStyle(color: Colors.red)),
+                ),
+              ],
+            ),
+            onTap: widget.onSelect,
+          ),
+        );
+      },
     );
   }
 }
