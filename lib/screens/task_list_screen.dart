@@ -378,29 +378,10 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
   }
 
   Future<void> _showRenameOrbitDialog(TaskDomain domain) async {
-    final controller = TextEditingController(text: domain.name);
     final result = await showDialog<String>(
       context: context,
-      builder: (ctx) => AlertDialog(
-        title: const Text('Orbit umbenennen'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: const InputDecoration(labelText: 'Name'),
-          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
-        ),
-        actions: [
-          TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('Abbrechen')),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
-            child: const Text('Speichern'),
-          ),
-        ],
-      ),
+      builder: (ctx) => _OrbitRenameDialog(initialName: domain.name),
     );
-    controller.dispose();
     if (result == null || result.isEmpty || !mounted) return;
     try {
       await _taskService.renameDomain(domain.id, result);
@@ -807,4 +788,52 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
     );
   }
 
+}
+
+class _OrbitRenameDialog extends StatefulWidget {
+  final String initialName;
+  const _OrbitRenameDialog({required this.initialName});
+
+  @override
+  State<_OrbitRenameDialog> createState() => _OrbitRenameDialogState();
+}
+
+class _OrbitRenameDialogState extends State<_OrbitRenameDialog> {
+  late final TextEditingController _ctrl;
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl = TextEditingController(text: widget.initialName);
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final v = _ctrl.text.trim();
+    if (v.isNotEmpty) Navigator.pop(context, v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return AlertDialog(
+      title: const Text('Orbit umbenennen'),
+      content: TextField(
+        controller: _ctrl,
+        autofocus: true,
+        decoration: const InputDecoration(labelText: 'Name'),
+        onSubmitted: (_) => _submit(),
+      ),
+      actions: [
+        TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Abbrechen')),
+        FilledButton(onPressed: _submit, child: const Text('Speichern')),
+      ],
+    );
+  }
 }
