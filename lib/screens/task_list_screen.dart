@@ -323,9 +323,18 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
   }
 
   Widget _buildOrbitTile(TaskDomain domain) {
+    final now = DateTime.now();
+    final orbitTasks = _taskService
+        .getTasks()
+        .where((t) => t.domainId == domain.id && t.status != TaskStatus.done)
+        .toList();
     return _OrbitTile(
       domain: domain,
       isSelected: _selectedOrbitId == domain.id,
+      activeCount: orbitTasks.length,
+      hasOverdue: orbitTasks.any((t) => t.dueDate.isBefore(now)),
+      hasExpiredReminder: orbitTasks.any(
+          (t) => t.reminderAt != null && t.reminderAt!.isBefore(now)),
       onSelect: () => setState(() {
         _selectedOrbitId = domain.id;
         _selectedSphereId = null;
@@ -807,6 +816,9 @@ class _OrbitRenameDialogState extends State<_OrbitRenameDialog> {
 class _OrbitTile extends StatefulWidget {
   final TaskDomain domain;
   final bool isSelected;
+  final int activeCount;
+  final bool hasOverdue;
+  final bool hasExpiredReminder;
   final VoidCallback onSelect;
   final Future<void> Function(Task) onDrop;
   final VoidCallback onRename;
@@ -815,6 +827,9 @@ class _OrbitTile extends StatefulWidget {
   const _OrbitTile({
     required this.domain,
     required this.isSelected,
+    required this.activeCount,
+    required this.hasOverdue,
+    required this.hasExpiredReminder,
     required this.onSelect,
     required this.onDrop,
     required this.onRename,
@@ -862,24 +877,64 @@ class _OrbitTileState extends State<_OrbitTile> {
                     widget.isSelected ? FontWeight.bold : FontWeight.normal,
               ),
             ),
-            trailing: PopupMenuButton<String>(
-              icon: const Icon(Icons.more_vert,
-                  color: Colors.white38, size: 18),
-              color: const Color(0xFF1C1C2E),
-              onSelected: (action) {
-                if (action == 'rename') widget.onRename();
-                if (action == 'delete') widget.onDelete();
-              },
-              itemBuilder: (_) => [
-                const PopupMenuItem(
-                  value: 'rename',
-                  child: Text('Umbenennen',
-                      style: TextStyle(color: Colors.white)),
-                ),
-                const PopupMenuItem(
-                  value: 'delete',
-                  child: Text('Löschen',
-                      style: TextStyle(color: Colors.red)),
+            trailing: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (widget.hasExpiredReminder)
+                  const Padding(
+                    padding: EdgeInsets.only(right: 4),
+                    child: Icon(Icons.notifications_active,
+                        color: Colors.red, size: 14),
+                  ),
+                if (widget.hasOverdue)
+                  const Padding(
+                    padding: EdgeInsets.only(right: 4),
+                    child: Icon(Icons.error_outline,
+                        color: Colors.red, size: 14),
+                  ),
+                if (widget.activeCount > 0)
+                  Padding(
+                    padding: const EdgeInsets.only(right: 4),
+                    child: Container(
+                      constraints: const BoxConstraints(minWidth: 20),
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 5, vertical: 1),
+                      decoration: BoxDecoration(
+                        color: Colors.white24,
+                        borderRadius: BorderRadius.circular(10),
+                      ),
+                      child: Text(
+                        '${widget.activeCount}',
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w600,
+                        ),
+                        textAlign: TextAlign.center,
+                      ),
+                    ),
+                  ),
+                PopupMenuButton<String>(
+                  icon: const Icon(Icons.more_vert,
+                      color: Colors.white38, size: 18),
+                  padding: EdgeInsets.zero,
+                  color: const Color(0xFF1C1C2E),
+                  onSelected: (action) {
+                    if (action == 'rename') widget.onRename();
+                    if (action == 'delete') widget.onDelete();
+                  },
+                  itemBuilder: (_) => [
+                    const PopupMenuItem(
+                      value: 'rename',
+                      child: Text('Umbenennen',
+                          style: TextStyle(color: Colors.white)),
+                    ),
+                    const PopupMenuItem(
+                      value: 'delete',
+                      child: Text('Löschen',
+                          style: TextStyle(color: Colors.red)),
+                    ),
+                  ],
                 ),
               ],
             ),
