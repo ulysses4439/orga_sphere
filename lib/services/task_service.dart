@@ -162,6 +162,33 @@ class TaskService {
     return domain;
   }
 
+  Future<void> renameDomain(String domainId, String name) async {
+    await ApiService.renameDomain(domainId, name);
+    final idx = _domains.indexWhere((d) => d.id == domainId);
+    if (idx != -1) {
+      final d = _domains[idx];
+      _domains[idx] = TaskDomain(
+        id: d.id,
+        name: name,
+        description: d.description,
+        colorHex: d.colorHex,
+        notificationEmails: d.notificationEmails,
+      );
+    }
+  }
+
+  Future<void> deleteDomain(String domainId) async {
+    await ApiService.deleteDomain(domainId);
+    _domains.removeWhere((d) => d.id == domainId);
+    _tasks.removeWhere((t) => t.domainId == domainId);
+  }
+
+  Future<void> moveTask(String taskId, String domainId) async {
+    await ApiService.moveTask(taskId, domainId);
+    final task = getTaskById(taskId);
+    if (task != null) task.domainId = domainId;
+  }
+
   Future<void> updateDomainEmails(String domainId, String notificationEmails) async {
     await ApiService.updateDomainEmails(domainId, notificationEmails);
     final idx = _domains.indexWhere((d) => d.id == domainId);

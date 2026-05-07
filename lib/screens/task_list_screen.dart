@@ -233,7 +233,7 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
                       itemCount: domains.length,
                       itemBuilder: (_, i) {
                         final d = domains[i];
-                        return _buildOrbitTile(d.id, d.name, d.color);
+                        return _buildOrbitTile(d);
                       },
                     ),
                   ),
@@ -322,31 +322,163 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
     );
   }
 
-  Widget _buildOrbitTile(String? id, String name, Color? color) {
-    final isSelected = _selectedOrbitId == id;
-    return ListTile(
-      selected: isSelected,
-      selectedTileColor: const Color(0xFF1C1C2E),
-      contentPadding: const EdgeInsets.symmetric(horizontal: 16, vertical: 2),
-      leading: color != null
-          ? Container(
-              width: 12,
-              height: 12,
-              decoration: BoxDecoration(color: color, shape: BoxShape.circle),
-            )
-          : const SizedBox(width: 12),
-      title: Text(
-        name,
-        style: TextStyle(
-          color: Colors.white,
-          fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
-        ),
-      ),
-      onTap: () => setState(() {
-        _selectedOrbitId = id;
-        _selectedSphereId = null;
-      }),
+  Widget _buildOrbitTile(TaskDomain domain) {
+    final isSelected = _selectedOrbitId == domain.id;
+    return DragTarget<Task>(
+      onWillAcceptWithDetails: (d) => d.data.domainId != domain.id,
+      onAcceptWithDetails: (d) async {
+        await _taskService.moveTask(d.data.id, domain.id);
+        if (mounted) setState(() {});
+      },
+      builder: (context, candidates, _) {
+        final hovering = candidates.isNotEmpty;
+        return ListTile(
+          selected: isSelected || hovering,
+          selectedTileColor: hovering
+              ? AppColors.teal.withValues(alpha: 0.35)
+              : const Color(0xFF1C1C2E),
+          contentPadding: const EdgeInsets.only(left: 16, right: 4),
+          leading: Container(
+            width: 12,
+            height: 12,
+            decoration: BoxDecoration(color: domain.color, shape: BoxShape.circle),
+          ),
+          title: Text(
+            domain.name,
+            style: TextStyle(
+              color: Colors.white,
+              fontWeight: isSelected ? FontWeight.bold : FontWeight.normal,
+            ),
+          ),
+          trailing: PopupMenuButton<String>(
+            icon: const Icon(Icons.more_vert, color: Colors.white38, size: 18),
+            color: const Color(0xFF1C1C2E),
+            onSelected: (action) {
+              if (action == 'rename') _showRenameOrbitDialog(domain);
+              if (action == 'delete') _showDeleteOrbitDialog(domain);
+            },
+            itemBuilder: (_) => [
+              const PopupMenuItem(
+                value: 'rename',
+                child: Text('Umbenennen', style: TextStyle(color: Colors.white)),
+              ),
+              const PopupMenuItem(
+                value: 'delete',
+                child: Text('Löschen', style: TextStyle(color: Colors.red)),
+              ),
+            ],
+          ),
+          onTap: () => setState(() {
+            _selectedOrbitId = domain.id;
+            _selectedSphereId = null;
+          }),
+        );
+      },
     );
+  }
+
+  Future<void> _showRenameOrbitDialog(TaskDomain domain) async {
+    final controller = TextEditingController(text: domain.name);
+    final result = await showDialog<String>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Orbit umbenennen'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(labelText: 'Name'),
+          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('Abbrechen')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Speichern'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (result == null || result.isEmpty || !mounted) return;
+    try {
+      await _taskService.renameDomain(domain.id, result);
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Fehler: $e')));
+      }
+    }
+  }
+
+  Future<void> _showDeleteOrbitDialog(TaskDomain domain) async {
+    final sphereCount =
+        _taskService.getTasks().where((t) => t.domainId == domain.id).length;
+
+    final first = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text('Orbit "${domain.name}" löschen?'),
+        content: Text(
+          sphereCount > 0
+              ? 'Dieser Orbit enthält $sphereCount Sphere${sphereCount == 1 ? '' : 's'}. '
+                  'Alle Spheres werden unwiderruflich gelöscht.'
+              : 'Der leere Orbit wird gelöscht.',
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Abbrechen')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Löschen'),
+          ),
+        ],
+      ),
+    );
+    if (first != true || !mounted) return;
+
+    final second = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Wirklich endgültig löschen?'),
+        content: const Text(
+            'Diese Aktion kann nicht rückgängig gemacht werden.'),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('Abbrechen')),
+          FilledButton(
+            style: FilledButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Endgültig löschen'),
+          ),
+        ],
+      ),
+    );
+    if (second != true || !mounted) return;
+
+    try {
+      await _taskService.deleteDomain(domain.id);
+      if (mounted) {
+        setState(() {
+          if (_selectedOrbitId == domain.id) {
+            final remaining = _taskService.getDomains();
+            _selectedOrbitId =
+                remaining.isNotEmpty ? remaining.first.id : null;
+          }
+          _selectedSphereId = null;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Fehler: $e')));
+      }
+    }
   }
 
   Widget _buildDesktopSpherePanel() {
@@ -489,12 +621,35 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
       itemBuilder: (context, index) {
         final task = tasks[index];
         final domain = _taskService.getDomainById(task.domainId);
-        return TaskListItem(
+        final card = TaskListItem(
           task: task,
           domainName: domain?.name ?? 'Allgemein',
           domainColor: domain?.color,
           isSelected: task.id == _selectedSphereId,
           onTap: () => setState(() => _selectedSphereId = task.id),
+        );
+        return Draggable<Task>(
+          data: task,
+          feedback: Material(
+            elevation: 6,
+            borderRadius: BorderRadius.circular(8),
+            child: Container(
+              width: 220,
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+              decoration: BoxDecoration(
+                color: domain?.color ?? Colors.grey[800],
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: Text(
+                task.title,
+                style: const TextStyle(color: Colors.white, fontSize: 14),
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+            ),
+          ),
+          childWhenDragging: Opacity(opacity: 0.3, child: card),
+          child: card,
         );
       },
     );

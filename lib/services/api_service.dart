@@ -119,6 +119,32 @@ class ApiService {
     _checkStatus(response);
   }
 
+  static Future<void> renameDomain(String domainId, String name) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/domains/$domainId/name'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'name': name}),
+    );
+    _checkStatus(response);
+  }
+
+  static Future<void> deleteDomain(String domainId) async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/domains/$domainId'),
+      headers: {'Content-Type': 'application/json'},
+    );
+    _checkStatus(response);
+  }
+
+  static Future<void> moveTask(String taskId, String domainId) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/tasks/$taskId/domain'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'domainId': domainId}),
+    );
+    _checkStatus(response);
+  }
+
   static Future<List<TaskLogEntry>> getLogs(String taskId) async {
     final response = await http.get(Uri.parse('$_baseUrl/logs/$taskId'));
     _checkStatus(response);

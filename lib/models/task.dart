@@ -4,7 +4,7 @@ import 'task_log_entry.dart';
 
 class Task {
   final String id;
-  final String domainId;
+  String domainId;
   final String title;
   String description;
   final DateTime startDate;

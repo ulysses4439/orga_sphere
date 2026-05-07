@@ -195,6 +195,55 @@ app.patch('/domains/:id', async (req, res) => {
   }
 });
 
+app.patch('/domains/:id/name', async (req, res) => {
+  const { id } = req.params;
+  const { name } = req.body;
+  if (!name?.trim()) return res.status(400).json({ error: 'Name required' });
+  try {
+    const p = await getPool();
+    const result = await p.request()
+      .input('id',   sql.NVarChar, id)
+      .input('name', sql.NVarChar, name.trim())
+      .query('UPDATE TaskDomain SET name = @name WHERE id = @id');
+    if (result.rowsAffected[0] === 0) return res.status(404).json({ error: 'Domain not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/domains/:id', async (req, res) => {
+  const { id } = req.params;
+  try {
+    const p = await getPool();
+    const tasks = await p.request()
+      .input('domainId', sql.NVarChar, id)
+      .query('SELECT id FROM Task WHERE domainId = @domainId');
+
+    for (const task of tasks.recordset) {
+      await p.request()
+        .input('prevId', sql.NVarChar, task.id)
+        .query('UPDATE Task SET previousTaskId = NULL WHERE previousTaskId = @prevId');
+      await p.request()
+        .input('taskId', sql.NVarChar, task.id)
+        .query('DELETE FROM TaskLogEntry WHERE taskId = @taskId');
+    }
+
+    await p.request()
+      .input('domainId', sql.NVarChar, id)
+      .query('DELETE FROM Task WHERE domainId = @domainId');
+
+    const result = await p.request()
+      .input('id', sql.NVarChar, id)
+      .query('DELETE FROM TaskDomain WHERE id = @id');
+
+    if (result.rowsAffected[0] === 0) return res.status(404).json({ error: 'Domain not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // -----------------------------------------------------------------------
 // Tasks
 // -----------------------------------------------------------------------
@@ -344,6 +393,24 @@ app.patch('/tasks/:id/reminder', async (req, res) => {
     if (result.rowsAffected[0] === 0) {
       return res.status(404).json({ error: 'Task not found' });
     }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Move a task to a different orbit
+app.patch('/tasks/:id/domain', async (req, res) => {
+  const { id } = req.params;
+  const { domainId } = req.body;
+  if (!domainId) return res.status(400).json({ error: 'domainId required' });
+  try {
+    const p = await getPool();
+    const result = await p.request()
+      .input('id',       sql.NVarChar, id)
+      .input('domainId', sql.NVarChar, domainId)
+      .query('UPDATE Task SET domainId = @domainId WHERE id = @id');
+    if (result.rowsAffected[0] === 0) return res.status(404).json({ error: 'Task not found' });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
