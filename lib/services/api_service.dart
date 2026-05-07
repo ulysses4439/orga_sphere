@@ -32,7 +32,7 @@ class ApiService {
     required String title,
     required String description,
     required DateTime startDate,
-    required DateTime dueDate,
+    DateTime? dueDate,
     required String recurrenceFrequency,
     required int recurrenceInterval,
   }) async {
@@ -44,7 +44,7 @@ class ApiService {
         'title': title,
         'description': description,
         'startDate': startDate.toIso8601String(),
-        'dueDate': dueDate.toIso8601String(),
+        'dueDate': dueDate?.toIso8601String(),
         'recurrenceFrequency': recurrenceFrequency,
         'recurrenceInterval': recurrenceInterval,
       }),

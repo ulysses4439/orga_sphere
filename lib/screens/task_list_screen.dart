@@ -8,6 +8,7 @@ import '../services/sound_service.dart';
 import '../theme/app_colors.dart';
 import '../widgets/task_list_item.dart';
 import '../widgets/sphere_detail_content.dart';
+import '../widgets/reminder_picker_dialog.dart';
 
 class TaskListScreen extends StatefulWidget {
   const TaskListScreen({super.key});
@@ -332,7 +333,7 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
       domain: domain,
       isSelected: _selectedOrbitId == domain.id,
       activeCount: orbitTasks.length,
-      hasOverdue: orbitTasks.any((t) => t.dueDate.isBefore(now)),
+      hasOverdue: orbitTasks.any((t) => t.dueDate != null && t.dueDate!.isBefore(now)),
       hasExpiredReminder: orbitTasks.any(
           (t) => t.reminderAt != null && t.reminderAt!.isBefore(now)),
       onSelect: () => setState(() {
@@ -499,7 +500,13 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
                           ),
                         ),
                         const Divider(height: 1),
-                        _buildNewSphereButton(),
+                        _InlineSphereCreator(
+                          orbitId: _selectedOrbitId,
+                          orbitColor: _selectedOrbitId != null
+                              ? _taskService.getDomainById(_selectedOrbitId!)?.color
+                              : null,
+                          onCreated: () => setState(() {}),
+                        ),
                       ],
                     ),
                     _buildDesktopSphereList(
@@ -511,38 +518,6 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
               ),
             ],
           ),
-        ),
-      ),
-    );
-  }
-
-  Widget _buildNewSphereButton() {
-    final orbitColor = _selectedOrbitId != null
-        ? _taskService.getDomainById(_selectedOrbitId!)?.color
-        : null;
-    return InkWell(
-      onTap: () async {
-        await Navigator.of(context).pushNamed(
-          '/create-task',
-          arguments: _selectedOrbitId,
-        );
-        if (mounted) setState(() {});
-      },
-      child: Container(
-        color: orbitColor,
-        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-        child: Row(
-          children: [
-            const Icon(Icons.add, size: 20, color: AppColors.teal),
-            const SizedBox(width: 12),
-            Text(
-              'Neue Sphere hinzufügen',
-              style: Theme.of(context)
-                  .textTheme
-                  .bodyMedium
-                  ?.copyWith(color: AppColors.teal),
-            ),
-          ],
         ),
       ),
     );
@@ -760,6 +735,225 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
   }
 
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+
+class _InlineSphereCreator extends StatefulWidget {
+  final String? orbitId;
+  final Color? orbitColor;
+  final VoidCallback onCreated;
+
+  const _InlineSphereCreator({
+    required this.orbitId,
+    required this.orbitColor,
+    required this.onCreated,
+  });
+
+  @override
+  State<_InlineSphereCreator> createState() => _InlineSphereCreatorState();
+}
+
+class _InlineSphereCreatorState extends State<_InlineSphereCreator> {
+  final _ctrl = TextEditingController();
+  final _focusNode = FocusNode();
+  bool _active = false;
+  DateTime? _dueDate;
+  DateTime? _reminderAt;
+  RecurrenceFrequency _frequency = RecurrenceFrequency.none;
+
+  final _taskService = TaskService();
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    _focusNode.dispose();
+    super.dispose();
+  }
+
+  void _onChanged(String v) {
+    setState(() => _active = v.trim().isNotEmpty);
+  }
+
+  Future<void> _pickDueDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _dueDate ?? DateTime.now().add(const Duration(days: 7)),
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (picked != null) setState(() => _dueDate = picked);
+  }
+
+  Future<void> _pickReminder() async {
+    final picked = await showDialog<DateTime>(
+      context: context,
+      builder: (_) => ReminderPickerDialog(initialDateTime: _reminderAt),
+    );
+    if (picked != null) setState(() => _reminderAt = picked);
+  }
+
+  Future<void> _pickRecurrence() async {
+    final picked = await showDialog<RecurrenceFrequency>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Wiederholung'),
+        children: RecurrenceFrequency.values.map((f) {
+          return SimpleDialogOption(
+            onPressed: () => Navigator.pop(ctx, f),
+            child: Text(_frequencyLabel(f)),
+          );
+        }).toList(),
+      ),
+    );
+    if (picked != null) setState(() => _frequency = picked);
+  }
+
+  String _frequencyLabel(RecurrenceFrequency f) {
+    switch (f) {
+      case RecurrenceFrequency.none: return 'Einmalig';
+      case RecurrenceFrequency.daily: return 'Täglich';
+      case RecurrenceFrequency.weekly: return 'Wöchentlich';
+      case RecurrenceFrequency.monthly: return 'Monatlich';
+      case RecurrenceFrequency.yearly: return 'Jährlich';
+    }
+  }
+
+  String _dueDateLabel() {
+    if (_dueDate == null) return 'Fällig';
+    const months = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+    return '${_dueDate!.day}. ${months[_dueDate!.month - 1]}';
+  }
+
+  Future<void> _submit() async {
+    final title = _ctrl.text.trim();
+    if (title.isEmpty || widget.orbitId == null) return;
+    final now = DateTime.now();
+    try {
+      final task = await _taskService.createTask(
+        domainId: widget.orbitId!,
+        title: title,
+        description: '',
+        startDate: now,
+        dueDate: _dueDate,
+        recurrence: RecurrencePattern(frequency: _frequency, interval: 1),
+      );
+      if (_reminderAt != null) {
+        await _taskService.setReminder(task.id, _reminderAt);
+      }
+      _ctrl.clear();
+      setState(() {
+        _active = false;
+        _dueDate = null;
+        _reminderAt = null;
+        _frequency = RecurrenceFrequency.none;
+      });
+      widget.onCreated();
+    } catch (_) {}
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      color: widget.orbitColor,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Row(
+            children: [
+              const Icon(Icons.add, size: 20, color: AppColors.teal),
+              const SizedBox(width: 8),
+              Expanded(
+                child: TextField(
+                  controller: _ctrl,
+                  focusNode: _focusNode,
+                  style: const TextStyle(color: Colors.white),
+                  decoration: InputDecoration(
+                    hintText: 'Neue Sphere hinzufügen',
+                    hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
+                    border: InputBorder.none,
+                    isDense: true,
+                    contentPadding: const EdgeInsets.symmetric(vertical: 8),
+                  ),
+                  onChanged: _onChanged,
+                  onSubmitted: (_) => _submit(),
+                ),
+              ),
+            ],
+          ),
+          if (_active) ...[
+            const SizedBox(height: 4),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.end,
+              children: [
+                _IconChip(
+                  icon: Icons.calendar_today,
+                  label: _dueDateLabel(),
+                  active: _dueDate != null,
+                  onTap: _pickDueDate,
+                ),
+                const SizedBox(width: 6),
+                _IconChip(
+                  icon: _reminderAt != null ? Icons.notifications_active : Icons.notifications_outlined,
+                  label: _reminderAt != null ? 'Erinnerung' : 'Erinnern',
+                  active: _reminderAt != null,
+                  onTap: _pickReminder,
+                ),
+                const SizedBox(width: 6),
+                _IconChip(
+                  icon: Icons.repeat,
+                  label: _frequency == RecurrenceFrequency.none ? 'Einmalig' : _frequencyLabel(_frequency),
+                  active: _frequency != RecurrenceFrequency.none,
+                  onTap: _pickRecurrence,
+                ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+}
+
+class _IconChip extends StatelessWidget {
+  final IconData icon;
+  final String label;
+  final bool active;
+  final VoidCallback onTap;
+
+  const _IconChip({
+    required this.icon,
+    required this.label,
+    required this.active,
+    required this.onTap,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final color = active ? AppColors.teal : Colors.grey[400]!;
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+        decoration: BoxDecoration(
+          border: Border.all(color: color.withValues(alpha: 0.5)),
+          borderRadius: BorderRadius.circular(16),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 14, color: color),
+            const SizedBox(width: 4),
+            Text(label, style: TextStyle(fontSize: 12, color: color)),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 
 class _OrbitRenameDialog extends StatefulWidget {
   final String initialName;

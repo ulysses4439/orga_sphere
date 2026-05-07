@@ -65,18 +65,30 @@ class TaskService {
 
   List<Task> getActiveTasks() =>
       (_tasks.where((t) => t.status != TaskStatus.done).toList()
-        ..sort((a, b) => a.dueDate.compareTo(b.dueDate)));
+        ..sort((a, b) {
+          if (a.dueDate == null && b.dueDate == null) return 0;
+          if (a.dueDate == null) return 1;
+          if (b.dueDate == null) return -1;
+          return a.dueDate!.compareTo(b.dueDate!);
+        }));
 
   List<Task> getArchivedTasks() =>
       (_tasks.where((t) => t.status == TaskStatus.done).toList()
-        ..sort((a, b) => (b.completedAt ?? b.dueDate).compareTo(a.completedAt ?? a.dueDate)));
+        ..sort((a, b) {
+          final bDate = b.completedAt ?? b.dueDate;
+          final aDate = a.completedAt ?? a.dueDate;
+          if (bDate == null && aDate == null) return 0;
+          if (bDate == null) return 1;
+          if (aDate == null) return -1;
+          return bDate.compareTo(aDate);
+        }));
 
   Future<Task> createTask({
     required String domainId,
     required String title,
     required String description,
     required DateTime startDate,
-    required DateTime dueDate,
+    DateTime? dueDate,
     required RecurrencePattern recurrence,
   }) async {
     final task = await ApiService.createTask(

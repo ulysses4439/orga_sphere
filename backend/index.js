@@ -279,7 +279,7 @@ app.post('/tasks', async (req, res) => {
       .input('title',               sql.NVarChar,  title)
       .input('description',         sql.NVarChar,  description || '')
       .input('startDate',           sql.DateTime2, new Date(startDate))
-      .input('dueDate',             sql.DateTime2, new Date(dueDate))
+      .input('dueDate',             sql.DateTime2, dueDate ? new Date(dueDate) : null)
       .input('recurrenceFrequency', sql.NVarChar,  recurrenceFrequency || 'none')
       .input('recurrenceInterval',  sql.Int,       recurrenceInterval || 1)
       .query(`INSERT INTO Task

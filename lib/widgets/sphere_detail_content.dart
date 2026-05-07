@@ -380,8 +380,10 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                     const SizedBox(height: 8),
                     _buildInfoRow(
                       'Fällig am',
-                      '${dueDate.day}. ${_monthName(dueDate.month)} ${dueDate.year}',
-                      valueColor: dueDate.isBefore(DateTime.now()) && !isDone
+                      dueDate != null
+                          ? '${dueDate.day}. ${_monthName(dueDate.month)} ${dueDate.year}'
+                          : 'Kein Datum',
+                      valueColor: dueDate != null && dueDate.isBefore(DateTime.now()) && !isDone
                           ? Colors.red
                           : null,
                     ),

@@ -8,7 +8,7 @@ class Task {
   final String title;
   String description;
   final DateTime startDate;
-  final DateTime dueDate;
+  DateTime? dueDate;
   final RecurrencePattern recurrence;
   TaskStatus status;
   final DateTime createdAt;
@@ -40,7 +40,7 @@ class Task {
       title: json['title'] as String,
       description: json['description'] as String? ?? '',
       startDate: DateTime.parse(json['startDate'] as String),
-      dueDate: DateTime.parse(json['dueDate'] as String),
+      dueDate: json['dueDate'] != null ? DateTime.parse(json['dueDate'] as String) : null,
       recurrence: RecurrencePattern(
         frequency: RecurrenceFrequency.values.firstWhere(
           (f) => f.name == (json['recurrenceFrequency'] as String? ?? 'none'),
@@ -65,17 +65,19 @@ class Task {
 
   bool get isRecurring => recurrence.isRecurring;
 
-  int get year => dueDate.year;
+  int get year => dueDate?.year ?? 9999;
 
   bool get isOverdue {
     if (status == TaskStatus.done) return false;
-    return DateTime.now().isAfter(dueDate);
+    if (dueDate == null) return false;
+    return DateTime.now().isAfter(dueDate!);
   }
 
   bool get isUpcoming {
+    if (dueDate == null) return false;
     final now = DateTime.now();
     final inThirtyDays = now.add(const Duration(days: 30));
-    return !isOverdue && dueDate.isBefore(inThirtyDays);
+    return !isOverdue && dueDate!.isBefore(inThirtyDays);
   }
 
   void addLogEntry(TaskLogEntry entry) {

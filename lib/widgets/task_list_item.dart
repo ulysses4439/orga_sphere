@@ -22,14 +22,16 @@ class TaskListItem extends StatelessWidget {
   Widget build(BuildContext context) {
     final dueDate = task.dueDate;
     final now = DateTime.now();
-    final daysUntilDue = dueDate.difference(now).inDays;
+    final daysUntilDue = dueDate?.difference(now).inDays;
 
     final Color urgencyColor;
     if (task.status == TaskStatus.done) {
       urgencyColor = Colors.grey[400]!;
+    } else if (dueDate == null) {
+      urgencyColor = Colors.grey;
     } else if (dueDate.isBefore(now)) {
       urgencyColor = Colors.red;
-    } else if (daysUntilDue <= 14) {
+    } else if (daysUntilDue != null && daysUntilDue <= 14) {
       urgencyColor = Colors.amber;
     } else {
       urgencyColor = Colors.green;
@@ -75,14 +77,15 @@ class TaskListItem extends StatelessWidget {
             const SizedBox(height: 4),
             Text('Orbit: $domainName', style: Theme.of(context).textTheme.bodySmall),
             const SizedBox(height: 4),
-            Text(
-              'Fällig: ${dueDate.day}. ${_monthName(dueDate.month)} ${dueDate.year}',
-              style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                    color: dueDate.isBefore(now) && task.status != TaskStatus.done
-                        ? Colors.red
-                        : null,
-                  ),
-            ),
+            if (dueDate != null)
+              Text(
+                'Fällig: ${dueDate.day}. ${_monthName(dueDate.month)} ${dueDate.year}',
+                style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                      color: dueDate.isBefore(now) && task.status != TaskStatus.done
+                          ? Colors.red
+                          : null,
+                    ),
+              ),
             const SizedBox(height: 4),
             Text(
               task.recurrence.germanLabel,
