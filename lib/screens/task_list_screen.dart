@@ -855,58 +855,52 @@ class _InlineSphereCreatorState extends State<_InlineSphereCreator> {
   Widget build(BuildContext context) {
     return Container(
       color: widget.orbitColor,
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+      child: Row(
         children: [
-          Row(
-            children: [
-              const Icon(Icons.add, size: 20, color: AppColors.teal),
-              const SizedBox(width: 8),
-              Expanded(
-                child: TextField(
-                  controller: _ctrl,
-                  focusNode: _focusNode,
-                  style: const TextStyle(color: Colors.white),
-                  decoration: InputDecoration(
-                    hintText: 'Neue Sphere hinzufügen',
-                    hintStyle: TextStyle(color: Colors.white.withValues(alpha: 0.5)),
-                    border: InputBorder.none,
-                    isDense: true,
-                    contentPadding: const EdgeInsets.symmetric(vertical: 8),
-                  ),
-                  onChanged: _onChanged,
-                  onSubmitted: (_) => _submit(),
+          const Icon(Icons.add, size: 20, color: AppColors.teal),
+          const SizedBox(width: 8),
+          Expanded(
+            child: TextField(
+              controller: _ctrl,
+              focusNode: _focusNode,
+              style: const TextStyle(color: Colors.black87, fontSize: 14),
+              decoration: InputDecoration(
+                hintText: 'Aufgabe hinzufügen',
+                hintStyle: TextStyle(
+                  color: Colors.black45,
+                  fontSize: 14,
+                  fontStyle: FontStyle.italic,
                 ),
+                border: InputBorder.none,
+                isDense: true,
+                contentPadding: const EdgeInsets.symmetric(vertical: 8),
               ),
-            ],
+              onChanged: _onChanged,
+              onSubmitted: (_) => _submit(),
+            ),
           ),
           if (_active) ...[
-            const SizedBox(height: 4),
-            Row(
-              mainAxisAlignment: MainAxisAlignment.end,
-              children: [
-                _IconChip(
-                  icon: Icons.calendar_today,
-                  label: _dueDateLabel(),
-                  active: _dueDate != null,
-                  onTap: _pickDueDate,
-                ),
-                const SizedBox(width: 6),
-                _IconChip(
-                  icon: _reminderAt != null ? Icons.notifications_active : Icons.notifications_outlined,
-                  label: _reminderAt != null ? 'Erinnerung' : 'Erinnern',
-                  active: _reminderAt != null,
-                  onTap: _pickReminder,
-                ),
-                const SizedBox(width: 6),
-                _IconChip(
-                  icon: Icons.repeat,
-                  label: _frequency == RecurrenceFrequency.none ? 'Einmalig' : _frequencyLabel(_frequency),
-                  active: _frequency != RecurrenceFrequency.none,
-                  onTap: _pickRecurrence,
-                ),
-              ],
+            const SizedBox(width: 8),
+            _IconChip(
+              icon: Icons.calendar_today,
+              label: _dueDateLabel(),
+              active: _dueDate != null,
+              onTap: _pickDueDate,
+            ),
+            const SizedBox(width: 4),
+            _IconChip(
+              icon: _reminderAt != null ? Icons.notifications_active : Icons.notifications_outlined,
+              label: _reminderAt != null ? 'Erinnerung' : 'Erinnern',
+              active: _reminderAt != null,
+              onTap: _pickReminder,
+            ),
+            const SizedBox(width: 4),
+            _IconChip(
+              icon: Icons.repeat,
+              label: _frequency == RecurrenceFrequency.none ? 'Einmalig' : _frequencyLabel(_frequency),
+              active: _frequency != RecurrenceFrequency.none,
+              onTap: _pickRecurrence,
             ),
           ],
         ],
@@ -930,22 +924,22 @@ class _IconChip extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final color = active ? AppColors.teal : Colors.grey[400]!;
+    final color = active ? AppColors.teal : const Color(0xFF424242);
     return InkWell(
       onTap: onTap,
       borderRadius: BorderRadius.circular(16),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
         decoration: BoxDecoration(
-          border: Border.all(color: color.withValues(alpha: 0.5)),
+          border: Border.all(color: color),
           borderRadius: BorderRadius.circular(16),
         ),
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(icon, size: 14, color: color),
+            Icon(icon, size: 13, color: color),
             const SizedBox(width: 4),
-            Text(label, style: TextStyle(fontSize: 12, color: color)),
+            Text(label, style: TextStyle(fontSize: 11, color: color)),
           ],
         ),
       ),
