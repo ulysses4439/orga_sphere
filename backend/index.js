@@ -56,12 +56,13 @@ async function sendReminderEmail(toAddresses, task, domainName) {
     console.log('SMTP not configured – skipping e-mail for task', task.id);
     return;
   }
+  const tz = 'Europe/Berlin';
   const dueStr = new Date(task.dueDate).toLocaleDateString('de-DE', {
-    day: '2-digit', month: 'long', year: 'numeric',
+    day: '2-digit', month: 'long', year: 'numeric', timeZone: tz,
   });
   const reminderStr = new Date(task.reminderAt).toLocaleString('de-DE', {
     day: '2-digit', month: 'long', year: 'numeric',
-    hour: '2-digit', minute: '2-digit',
+    hour: '2-digit', minute: '2-digit', timeZone: tz,
   });
   await mailTransport.sendMail({
     from: process.env.SMTP_FROM || process.env.SMTP_USER,
@@ -502,9 +503,10 @@ app.post('/logs', async (req, res) => {
 // -----------------------------------------------------------------------
 
 async function runScheduler() {
+  const now = new Date();
+  console.log(`Scheduler: run at ${now.toISOString()}`);
   try {
     const p = await getPool();
-    const now = new Date();
 
     // 1. Recurring tasks: auto-create next capsule if due
     const recurring = await p.request().query(
@@ -531,8 +533,10 @@ async function runScheduler() {
                 AND t.reminderEmailSentAt IS NULL
                 AND t.status != 'done'`);
 
+    console.log(`Scheduler: ${dueReminders.recordset.length} due reminder(s) found`);
     for (const task of dueReminders.recordset) {
       const emails = (task.notificationEmails || '').split(',').map(e => e.trim()).filter(Boolean);
+      console.log(`Scheduler: processing reminder for task ${task.id} ("${task.title}"), reminderAt=${task.reminderAt}, emails=${emails.length}`);
       if (emails.length > 0) {
         try {
           await sendReminderEmail(emails, task, task.domainName);
