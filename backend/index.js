@@ -390,7 +390,7 @@ app.patch('/tasks/:id/reminder', async (req, res) => {
     const result = await p.request()
       .input('id',         sql.NVarChar,  id)
       .input('reminderAt', sql.DateTime2, reminderAt ? new Date(reminderAt) : null)
-      .query('UPDATE Task SET reminderAt = @reminderAt WHERE id = @id');
+      .query('UPDATE Task SET reminderAt = @reminderAt, reminderEmailSentAt = NULL WHERE id = @id');
     if (result.rowsAffected[0] === 0) {
       return res.status(404).json({ error: 'Task not found' });
     }
