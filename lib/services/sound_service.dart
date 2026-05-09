@@ -1,12 +1,5 @@
-import 'dart:js_interop';
-
-@JS('playChime')
-external void _jsPlayChime();
-
 class SoundService {
   static void playChime() {
-    try {
-      _jsPlayChime();
-    } catch (_) {}
+    // Sound-Wiedergabe: Web-Implementierung entfernt, Desktop-Sound folgt später
   }
 }
