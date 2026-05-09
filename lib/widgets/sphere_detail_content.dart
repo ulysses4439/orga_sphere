@@ -144,36 +144,67 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
   }
 
   void _startTask() {
+    final logCtrl = TextEditingController();
     showDialog(
       context: context,
-      builder: (dialogContext) => AlertDialog(
-        title: const Text('In Bearbeitung setzen?'),
-        content: const Text('Die Sphere wird als "In Bearbeitung" markiert.'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('Abbrechen'),
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setSt) => AlertDialog(
+          title: const Text('In Bearbeitung setzen'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text('Was ist der aktuelle Stand oder nächste Schritt?'),
+              const SizedBox(height: 12),
+              TextField(
+                controller: logCtrl,
+                autofocus: true,
+                maxLines: 3,
+                minLines: 2,
+                textCapitalization: TextCapitalization.sentences,
+                decoration: const InputDecoration(
+                  hintText: 'Ersten Eintrag eingeben…',
+                  border: OutlineInputBorder(),
+                ),
+                onChanged: (_) => setSt(() {}),
+              ),
+            ],
           ),
-          FilledButton(
-            onPressed: () async {
-              Navigator.pop(dialogContext);
-              setState(() => _isBusy = true);
-              try {
-                await _taskService.startTask(widget.taskId);
-                if (!mounted) return;
-                setState(() {
-                  _task = _taskService.getTaskById(widget.taskId);
-                  _isBusy = false;
-                });
-              } catch (e) {
-                if (!mounted) return;
-                setState(() => _isBusy = false);
-                ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fehler: $e')));
-              }
-            },
-            child: const Text('In Bearbeitung'),
-          ),
-        ],
+          actions: [
+            TextButton(
+              onPressed: () {
+                logCtrl.dispose();
+                Navigator.pop(dialogContext);
+              },
+              child: const Text('Abbrechen'),
+            ),
+            FilledButton(
+              onPressed: logCtrl.text.trim().isEmpty
+                  ? null
+                  : () async {
+                      final text = logCtrl.text.trim();
+                      logCtrl.dispose();
+                      Navigator.pop(dialogContext);
+                      setState(() => _isBusy = true);
+                      try {
+                        await _taskService.startTask(widget.taskId);
+                        await _taskService.addLogEntry(widget.taskId, text);
+                        if (!mounted) return;
+                        setState(() {
+                          _task = _taskService.getTaskById(widget.taskId);
+                          _isBusy = false;
+                        });
+                      } catch (e) {
+                        if (!mounted) return;
+                        setState(() => _isBusy = false);
+                        ScaffoldMessenger.of(context)
+                            .showSnackBar(SnackBar(content: Text('Fehler: $e')));
+                      }
+                    },
+              child: const Text('In Bearbeitung'),
+            ),
+          ],
+        ),
       ),
     );
   }
