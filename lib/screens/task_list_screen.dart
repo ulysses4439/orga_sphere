@@ -11,6 +11,7 @@ import '../theme/app_colors.dart';
 import '../widgets/task_list_item.dart';
 import '../widgets/sphere_detail_content.dart';
 import '../widgets/reminder_picker_dialog.dart';
+import 'settings_screen.dart';
 
 class TaskListScreen extends StatefulWidget {
   final VoidCallback? onLogout;
@@ -219,8 +220,9 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
+            _UserHeader(onLogout: widget.onLogout),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
               child: Text(
                 'Orbits',
                 style: Theme.of(context).textTheme.titleLarge?.copyWith(
@@ -252,32 +254,6 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
               onTap: () async {
                 await Navigator.of(context).pushNamed('/create-domain');
                 if (mounted) setState(() {});
-              },
-            ),
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.logout, color: Colors.white54),
-              title: AuthService.displayName != null
-                  ? Text(
-                      AuthService.displayName!,
-                      style: const TextStyle(color: Colors.white70, fontSize: 12),
-                      overflow: TextOverflow.ellipsis,
-                    )
-                  : Text(
-                      AuthService.email ?? 'Abmelden',
-                      style: const TextStyle(color: Colors.white70, fontSize: 12),
-                      overflow: TextOverflow.ellipsis,
-                    ),
-              subtitle: AuthService.displayName != null
-                  ? Text(
-                      AuthService.email ?? '',
-                      style: const TextStyle(color: Colors.white38, fontSize: 11),
-                      overflow: TextOverflow.ellipsis,
-                    )
-                  : null,
-              onTap: () async {
-                await AuthService.logout();
-                widget.onLogout?.call();
               },
             ),
           ],
@@ -1407,6 +1383,132 @@ class _OrbitMembersBarState extends State<_OrbitMembersBar> {
           ),
         );
       },
+    );
+  }
+}
+
+// ---------------------------------------------------------------------------
+// User-Header in der Sidebar
+// ---------------------------------------------------------------------------
+
+class _UserHeader extends StatelessWidget {
+  final VoidCallback? onLogout;
+  const _UserHeader({this.onLogout});
+
+  String _initials() {
+    final name = AuthService.displayName;
+    if (name != null && name.isNotEmpty) {
+      final parts = name.trim().split(' ');
+      if (parts.length >= 2) {
+        return '${parts.first[0]}${parts.last[0]}'.toUpperCase();
+      }
+      return name[0].toUpperCase();
+    }
+    return (AuthService.email ?? '?')[0].toUpperCase();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return PopupMenuButton<String>(
+      offset: const Offset(8, 0),
+      color: const Color(0xFF1C1C2E),
+      onSelected: (value) async {
+        if (value == 'settings') {
+          await Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (_) => SettingsScreen(onLogout: onLogout ?? () {}),
+            ),
+          );
+        } else if (value == 'logout') {
+          final confirmed = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              title: const Text('Abmelden'),
+              content: const Text('Möchtest du dich wirklich abmelden?'),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('Abbrechen'),
+                ),
+                FilledButton(
+                  onPressed: () => Navigator.pop(ctx, true),
+                  style: FilledButton.styleFrom(backgroundColor: Colors.red),
+                  child: const Text('Abmelden'),
+                ),
+              ],
+            ),
+          );
+          if (confirmed == true) {
+            await AuthService.logout();
+            onLogout?.call();
+          }
+        }
+      },
+      itemBuilder: (_) => [
+        const PopupMenuItem(
+          value: 'settings',
+          child: Row(children: [
+            Icon(Icons.settings_outlined, color: Colors.white70, size: 20),
+            SizedBox(width: 12),
+            Text('Einstellungen', style: TextStyle(color: Colors.white)),
+          ]),
+        ),
+        const PopupMenuItem(
+          value: 'logout',
+          child: Row(children: [
+            Icon(Icons.logout, color: Colors.white70, size: 20),
+            SizedBox(width: 12),
+            Text('Ausloggen', style: TextStyle(color: Colors.white)),
+          ]),
+        ),
+      ],
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 16, 12, 8),
+        child: Row(
+          children: [
+            CircleAvatar(
+              radius: 18,
+              backgroundColor: AppColors.teal,
+              child: Text(
+                _initials(),
+                style: const TextStyle(
+                  color: Colors.white,
+                  fontSize: 13,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (AuthService.displayName != null)
+                    Text(
+                      AuthService.displayName!,
+                      style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 13,
+                          fontWeight: FontWeight.w600),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  Text(
+                    AuthService.email ?? '',
+                    style: TextStyle(
+                      color: AuthService.displayName != null
+                          ? Colors.white54
+                          : Colors.white,
+                      fontSize: AuthService.displayName != null ? 11 : 13,
+                    ),
+                    overflow: TextOverflow.ellipsis,
+                  ),
+                ],
+              ),
+            ),
+            const Icon(Icons.expand_more, color: Colors.white38, size: 18),
+          ],
+        ),
+      ),
     );
   }
 }

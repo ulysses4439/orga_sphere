@@ -293,7 +293,76 @@ app.post('/auth/login', async (req, res) => {
 });
 
 app.get('/auth/me', requireAuth, async (req, res) => {
-  res.json({ userId: req.user.userId, email: req.user.email });
+  res.json({ userId: req.user.userId, email: req.user.email, displayName: req.user.displayName || null });
+});
+
+app.patch('/auth/profile', requireAuth, async (req, res) => {
+  const { displayName, email } = req.body;
+  const userId = req.user.userId;
+  try {
+    const p = await getPool();
+    if (email !== undefined) {
+      const emailLower = email.trim().toLowerCase();
+      if (!emailLower.includes('@')) return res.status(400).json({ error: 'Ungültige E-Mail-Adresse' });
+      const existing = await p.request()
+        .input('email', sql.NVarChar, emailLower)
+        .input('userId', sql.NVarChar, userId)
+        .query('SELECT id FROM AppUser WHERE email = @email AND id <> @userId');
+      if (existing.recordset.length > 0) {
+        return res.status(409).json({ error: 'Diese E-Mail wird bereits verwendet' });
+      }
+      await p.request()
+        .input('email', sql.NVarChar, emailLower)
+        .input('userId', sql.NVarChar, userId)
+        .query('UPDATE AppUser SET email = @email WHERE id = @userId');
+    }
+    if (displayName !== undefined) {
+      const nameValue = displayName?.trim() || null;
+      await p.request()
+        .input('displayName', sql.NVarChar, nameValue)
+        .input('userId', sql.NVarChar, userId)
+        .query('UPDATE AppUser SET displayName = @displayName WHERE id = @userId');
+    }
+    const updated = await p.request()
+      .input('userId', sql.NVarChar, userId)
+      .query('SELECT email, displayName FROM AppUser WHERE id = @userId');
+    const user = updated.recordset[0];
+    const token = jwt.sign(
+      { userId, email: user.email, displayName: user.displayName || null },
+      JWT_SECRET, { expiresIn: JWT_EXPIRES_IN }
+    );
+    res.json({ token, email: user.email, displayName: user.displayName || null });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/auth/password', requireAuth, async (req, res) => {
+  const { currentPassword, newPassword } = req.body;
+  if (!currentPassword || !newPassword) {
+    return res.status(400).json({ error: 'Aktuelles und neues Passwort erforderlich' });
+  }
+  if (newPassword.length < 8) {
+    return res.status(400).json({ error: 'Neues Passwort muss mindestens 8 Zeichen haben' });
+  }
+  try {
+    const p = await getPool();
+    const result = await p.request()
+      .input('userId', sql.NVarChar, req.user.userId)
+      .query('SELECT passwordHash FROM AppUser WHERE id = @userId');
+    const user = result.recordset[0];
+    if (!user) return res.status(404).json({ error: 'Nutzer nicht gefunden' });
+    const valid = await bcrypt.compare(currentPassword, user.passwordHash);
+    if (!valid) return res.status(401).json({ error: 'Aktuelles Passwort ist falsch' });
+    const newHash = await bcrypt.hash(newPassword, 12);
+    await p.request()
+      .input('hash', sql.NVarChar, newHash)
+      .input('userId', sql.NVarChar, req.user.userId)
+      .query('UPDATE AppUser SET passwordHash = @hash WHERE id = @userId');
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // -----------------------------------------------------------------------

@@ -81,6 +81,39 @@ class AuthService {
     }
   }
 
+  static Future<void> updateProfile({String? displayName, String? email}) async {
+    final body = <String, dynamic>{};
+    if (displayName != null) body['displayName'] = displayName;
+    if (email != null) body['email'] = email;
+    final response = await http.patch(
+      Uri.parse('$baseUrl/auth/profile'),
+      headers: authHeaders,
+      body: jsonEncode(body),
+    );
+    if (response.statusCode != 200) {
+      final b = jsonDecode(response.body) as Map<String, dynamic>;
+      throw Exception(b['error'] ?? 'Aktualisierung fehlgeschlagen');
+    }
+    final b = jsonDecode(response.body) as Map<String, dynamic>;
+    await _saveSession(b['token'] as String, b['email'] as String, b['displayName'] as String?);
+  }
+
+  static Future<void> changePassword(
+      String currentPassword, String newPassword) async {
+    final response = await http.patch(
+      Uri.parse('$baseUrl/auth/password'),
+      headers: authHeaders,
+      body: jsonEncode({
+        'currentPassword': currentPassword,
+        'newPassword': newPassword,
+      }),
+    );
+    if (response.statusCode != 200) {
+      final b = jsonDecode(response.body) as Map<String, dynamic>;
+      throw Exception(b['error'] ?? 'Passwortänderung fehlgeschlagen');
+    }
+  }
+
   static Future<void> logout() async {
     _token = null;
     _email = null;
