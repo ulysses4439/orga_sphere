@@ -3,6 +3,8 @@ const sql = require('mssql');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
 const nodemailer = require('nodemailer');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
 require('dotenv').config();
 
 const app = express();
@@ -10,6 +12,9 @@ const port = process.env.PORT || 3000;
 
 app.use(cors());
 app.use(express.json());
+
+const JWT_SECRET = process.env.JWT_SECRET || 'changeme-in-production';
+const JWT_EXPIRES_IN = '30d';
 
 const config = {
   user: process.env.SQL_USER,
@@ -51,11 +56,20 @@ const mailTransport = process.env.SMTP_HOST
     })
   : null;
 
-async function sendReminderEmail(toAddresses, task, domainName) {
+async function sendMail(to, subject, html) {
   if (!mailTransport) {
-    console.log('SMTP not configured – skipping e-mail for task', task.id);
+    console.log('SMTP not configured – skipping e-mail to', to);
     return;
   }
+  await mailTransport.sendMail({
+    from: process.env.SMTP_FROM || process.env.SMTP_USER,
+    to,
+    subject,
+    html,
+  });
+}
+
+async function sendReminderEmail(toAddresses, task, domainName) {
   const tz = 'Europe/Berlin';
   const dueStr = new Date(task.dueDate).toLocaleDateString('de-DE', {
     day: '2-digit', month: 'long', year: 'numeric', timeZone: tz,
@@ -64,11 +78,10 @@ async function sendReminderEmail(toAddresses, task, domainName) {
     day: '2-digit', month: 'long', year: 'numeric',
     hour: '2-digit', minute: '2-digit', timeZone: tz,
   });
-  await mailTransport.sendMail({
-    from: process.env.SMTP_FROM || process.env.SMTP_USER,
-    to: toAddresses,
-    subject: `⏰ Erinnerung: ${task.title}`,
-    html: `
+  await sendMail(
+    toAddresses,
+    `⏰ Erinnerung: ${task.title}`,
+    `
       <h2>Erinnerung für Sphere: ${task.title}</h2>
       <p><strong>Orbit:</strong> ${domainName}</p>
       <p><strong>Fällig am:</strong> ${dueStr}</p>
@@ -76,8 +89,66 @@ async function sendReminderEmail(toAddresses, task, domainName) {
       ${task.description ? `<p><strong>Beschreibung:</strong> ${task.description}</p>` : ''}
       <hr>
       <p style="color:#666;font-size:12px">OrgaSphere – Orbit-weite Erinnerung</p>
-    `,
-  });
+    `
+  );
+}
+
+// -----------------------------------------------------------------------
+// JWT-Middleware
+// -----------------------------------------------------------------------
+
+function requireAuth(req, res, next) {
+  const header = req.headers['authorization'];
+  if (!header || !header.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Nicht authentifiziert' });
+  }
+  const token = header.slice(7);
+  try {
+    const payload = jwt.verify(token, JWT_SECRET);
+    req.user = { userId: payload.userId, email: payload.email };
+    next();
+  } catch {
+    return res.status(401).json({ error: 'Token ungültig oder abgelaufen' });
+  }
+}
+
+// Prüft ob der eingeloggte User Pilot des Orbits ist.
+async function requirePilot(req, res, next) {
+  const orbitId = req.params.id || req.params.orbitId;
+  try {
+    const p = await getPool();
+    const result = await p.request()
+      .input('orbitId', sql.NVarChar, orbitId)
+      .input('userId',  sql.NVarChar, req.user.userId)
+      .query(`SELECT id FROM OrbitMember
+              WHERE orbitId = @orbitId AND userId = @userId AND role = 'pilot' AND status = 'active'`);
+    if (result.recordset.length === 0) {
+      return res.status(403).json({ error: 'Nur der Pilot darf diese Aktion ausführen' });
+    }
+    next();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+}
+
+// Prüft ob der eingeloggte User Mitglied (Pilot oder aktiver Co-Pilot) des Orbits ist.
+async function requireMember(req, res, next) {
+  const orbitId = req.params.id || req.params.orbitId || req.body?.domainId;
+  if (!orbitId) return res.status(400).json({ error: 'orbitId fehlt' });
+  try {
+    const p = await getPool();
+    const result = await p.request()
+      .input('orbitId', sql.NVarChar, orbitId)
+      .input('userId',  sql.NVarChar, req.user.userId)
+      .query(`SELECT id FROM OrbitMember
+              WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
+    if (result.recordset.length === 0) {
+      return res.status(403).json({ error: 'Kein Zugriff auf diesen Orbit' });
+    }
+    next();
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 }
 
 // -----------------------------------------------------------------------
@@ -95,8 +166,6 @@ function nextDate(current, frequency, interval) {
   return d;
 }
 
-// Creates the next capsule for a recurring task if none exists yet.
-// Returns the new task row or null if no capsule was created.
 async function createNextCapsuleIfNeeded(p, task) {
   if (task.recurrenceFrequency === 'none') return null;
 
@@ -147,48 +216,275 @@ app.get('/health', async (req, res) => {
 });
 
 // -----------------------------------------------------------------------
-// Domains
+// Auth
 // -----------------------------------------------------------------------
 
-app.get('/domains', async (req, res) => {
+// Nach erfolgreicher Registrierung oder Login: alle OrbitMember-Einträge mit dieser
+// E-Mail und userId=NULL mit dem neuen Account verknüpfen (z.B. Admin-Migration oder
+// ausstehende Einladungen).
+async function linkPendingMemberships(p, userId, email) {
+  await p.request()
+    .input('userId', sql.NVarChar, userId)
+    .input('email',  sql.NVarChar, email)
+    .query(`UPDATE OrbitMember
+            SET userId = @userId, status = 'active', joinedAt = GETUTCDATE()
+            WHERE email = @email AND userId IS NULL AND status = 'active'`);
+}
+
+app.post('/auth/register', async (req, res) => {
+  const { email, password } = req.body;
+  if (!email?.trim() || !password) {
+    return res.status(400).json({ error: 'E-Mail und Passwort erforderlich' });
+  }
+  if (password.length < 8) {
+    return res.status(400).json({ error: 'Passwort muss mindestens 8 Zeichen haben' });
+  }
   try {
     const p = await getPool();
-    const result = await p.request().query('SELECT * FROM TaskDomain');
+    const existing = await p.request()
+      .input('email', sql.NVarChar, email.trim().toLowerCase())
+      .query('SELECT id FROM AppUser WHERE email = @email');
+    if (existing.recordset.length > 0) {
+      return res.status(409).json({ error: 'Diese E-Mail ist bereits registriert' });
+    }
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const userId = uuidv4();
+    await p.request()
+      .input('id',           sql.NVarChar, userId)
+      .input('email',        sql.NVarChar, email.trim().toLowerCase())
+      .input('passwordHash', sql.NVarChar, passwordHash)
+      .query('INSERT INTO AppUser (id, email, passwordHash) VALUES (@id, @email, @passwordHash)');
+
+    await linkPendingMemberships(p, userId, email.trim().toLowerCase());
+
+    const token = jwt.sign({ userId, email: email.trim().toLowerCase() }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+    res.json({ token, userId, email: email.trim().toLowerCase() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/auth/login', async (req, res) => {
+  const { email, password } = req.body;
+  if (!email?.trim() || !password) {
+    return res.status(400).json({ error: 'E-Mail und Passwort erforderlich' });
+  }
+  try {
+    const p = await getPool();
+    const result = await p.request()
+      .input('email', sql.NVarChar, email.trim().toLowerCase())
+      .query('SELECT * FROM AppUser WHERE email = @email');
+    const user = result.recordset[0];
+    if (!user) {
+      return res.status(401).json({ error: 'E-Mail oder Passwort falsch' });
+    }
+    const valid = await bcrypt.compare(password, user.passwordHash);
+    if (!valid) {
+      return res.status(401).json({ error: 'E-Mail oder Passwort falsch' });
+    }
+    const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+    res.json({ token, userId: user.id, email: user.email });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/auth/me', requireAuth, async (req, res) => {
+  res.json({ userId: req.user.userId, email: req.user.email });
+});
+
+// -----------------------------------------------------------------------
+// Einladung (HTML-Seite + Annahme)
+// -----------------------------------------------------------------------
+
+app.get('/invite', async (req, res) => {
+  const { token } = req.query;
+  if (!token) {
+    return res.status(400).send('<h2>Ungültiger Einladungslink.</h2>');
+  }
+  try {
+    const p = await getPool();
+    const result = await p.request()
+      .input('token', sql.NVarChar, token)
+      .query(`SELECT om.*, td.name AS orbitName
+              FROM OrbitMember om
+              JOIN TaskDomain td ON om.orbitId = td.id
+              WHERE om.inviteToken = @token AND om.status = 'pending'`);
+    if (result.recordset.length === 0) {
+      return res.status(404).send('<h2>Dieser Einladungslink ist ungültig oder wurde bereits verwendet.</h2>');
+    }
+    const invite = result.recordset[0];
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(`<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OrgaSphere – Einladung annehmen</title>
+  <style>
+    body { font-family: sans-serif; max-width: 480px; margin: 60px auto; padding: 0 20px; color: #333; }
+    h1 { color: #512DA8; }
+    input { width: 100%; padding: 10px; margin: 8px 0 16px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
+    button { background: #512DA8; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 16px; cursor: pointer; width: 100%; }
+    button:hover { background: #4527A0; }
+    .hint { color: #666; font-size: 14px; margin-top: 8px; }
+    .error { color: #c62828; margin-top: 12px; }
+    .success { color: #2e7d32; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>OrgaSphere</h1>
+  <p>Du wurdest als <strong>Co-Pilot</strong> zum Orbit <strong>"${invite.orbitName}"</strong> eingeladen.</p>
+  <p>Erstelle jetzt dein Konto, um loszulegen:</p>
+  <form id="form">
+    <input type="email" id="email" value="${invite.email}" readonly style="background:#f5f5f5">
+    <input type="password" id="password" placeholder="Passwort (mind. 8 Zeichen)" required>
+    <input type="password" id="password2" placeholder="Passwort wiederholen" required>
+    <button type="submit">Konto erstellen & Einladung annehmen</button>
+  </form>
+  <div id="msg"></div>
+  <script>
+    document.getElementById('form').addEventListener('submit', async e => {
+      e.preventDefault();
+      const pw = document.getElementById('password').value;
+      const pw2 = document.getElementById('password2').value;
+      const msg = document.getElementById('msg');
+      if (pw !== pw2) { msg.className = 'error'; msg.textContent = 'Passwörter stimmen nicht überein.'; return; }
+      if (pw.length < 8) { msg.className = 'error'; msg.textContent = 'Passwort muss mindestens 8 Zeichen haben.'; return; }
+      const res = await fetch('/invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: '${token}', password: pw })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        msg.className = 'success';
+        msg.textContent = 'Konto erstellt! Du kannst dich jetzt in der OrgaSphere-App mit deiner E-Mail anmelden.';
+        document.getElementById('form').style.display = 'none';
+      } else {
+        msg.className = 'error';
+        msg.textContent = data.error || 'Fehler beim Erstellen des Kontos.';
+      }
+    });
+  </script>
+</body>
+</html>`);
+  } catch (err) {
+    res.status(500).send('<h2>Serverfehler. Bitte versuche es später erneut.</h2>');
+  }
+});
+
+app.post('/invite', async (req, res) => {
+  const { token, password } = req.body;
+  if (!token || !password) {
+    return res.status(400).json({ error: 'Token und Passwort erforderlich' });
+  }
+  if (password.length < 8) {
+    return res.status(400).json({ error: 'Passwort muss mindestens 8 Zeichen haben' });
+  }
+  try {
+    const p = await getPool();
+    const inviteResult = await p.request()
+      .input('token', sql.NVarChar, token)
+      .query(`SELECT * FROM OrbitMember WHERE inviteToken = @token AND status = 'pending'`);
+    if (inviteResult.recordset.length === 0) {
+      return res.status(404).json({ error: 'Einladungslink ungültig oder bereits verwendet' });
+    }
+    const invite = inviteResult.recordset[0];
+
+    // Prüfen ob E-Mail schon registriert
+    const existing = await p.request()
+      .input('email', sql.NVarChar, invite.email)
+      .query('SELECT id FROM AppUser WHERE email = @email');
+
+    let userId;
+    if (existing.recordset.length > 0) {
+      userId = existing.recordset[0].id;
+    } else {
+      const passwordHash = await bcrypt.hash(password, 12);
+      userId = uuidv4();
+      await p.request()
+        .input('id',           sql.NVarChar, userId)
+        .input('email',        sql.NVarChar, invite.email)
+        .input('passwordHash', sql.NVarChar, passwordHash)
+        .query('INSERT INTO AppUser (id, email, passwordHash) VALUES (@id, @email, @passwordHash)');
+    }
+
+    // Einladung aktivieren und alle weiteren pending-Einladungen für diese E-Mail verknüpfen
+    await linkPendingMemberships(p, userId, invite.email);
+
+    // Diesen spezifischen Eintrag falls noch nicht durch linkPendingMemberships erfasst:
+    await p.request()
+      .input('token',  sql.NVarChar,  invite.inviteToken)
+      .input('userId', sql.NVarChar,  userId)
+      .query(`UPDATE OrbitMember SET userId = @userId, status = 'active',
+              joinedAt = GETUTCDATE(), inviteToken = NULL
+              WHERE inviteToken = @token`);
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// -----------------------------------------------------------------------
+// Domains (Orbits)
+// -----------------------------------------------------------------------
+
+app.get('/domains', requireAuth, async (req, res) => {
+  try {
+    const p = await getPool();
+    const result = await p.request()
+      .input('userId', sql.NVarChar, req.user.userId)
+      .query(`SELECT d.*
+              FROM TaskDomain d
+              JOIN OrbitMember om ON om.orbitId = d.id
+              WHERE om.userId = @userId AND om.status = 'active'`);
     res.json(result.recordset);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/domains', async (req, res) => {
-  const { name, description, color, notificationEmails } = req.body;
+app.post('/domains', requireAuth, async (req, res) => {
+  const { name, description, color } = req.body;
   const id = uuidv4();
   try {
     const p = await getPool();
     const result = await p.request()
-      .input('id',                 sql.NVarChar, id)
-      .input('name',               sql.NVarChar, name)
-      .input('description',        sql.NVarChar, description)
-      .input('color',              sql.NVarChar, color || '#F5F5F5')
-      .input('notificationEmails', sql.NVarChar, notificationEmails || null)
-      .query(`INSERT INTO TaskDomain (id, name, description, color, notificationEmails)
+      .input('id',          sql.NVarChar, id)
+      .input('name',        sql.NVarChar, name)
+      .input('description', sql.NVarChar, description)
+      .input('color',       sql.NVarChar, color || '#F5F5F5')
+      .query(`INSERT INTO TaskDomain (id, name, description, color)
               OUTPUT INSERTED.*
-              VALUES (@id, @name, @description, @color, @notificationEmails)`);
+              VALUES (@id, @name, @description, @color)`);
+
+    // Ersteller wird automatisch Pilot
+    await p.request()
+      .input('id',       sql.NVarChar,  uuidv4())
+      .input('orbitId',  sql.NVarChar,  id)
+      .input('userId',   sql.NVarChar,  req.user.userId)
+      .input('email',    sql.NVarChar,  req.user.email)
+      .query(`INSERT INTO OrbitMember (id, orbitId, userId, email, role, status, joinedAt)
+              VALUES (@id, @orbitId, @userId, @email, 'pilot', 'active', GETUTCDATE())`);
+
     res.json(result.recordset[0]);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.patch('/domains/:id', async (req, res) => {
+app.patch('/domains/:id', requireAuth, requireMember, async (req, res) => {
   const { id } = req.params;
-  const { notificationEmails } = req.body;
+  const { color } = req.body;
   try {
     const p = await getPool();
     const result = await p.request()
-      .input('id',                 sql.NVarChar, id)
-      .input('notificationEmails', sql.NVarChar, notificationEmails ?? null)
-      .query('UPDATE TaskDomain SET notificationEmails = @notificationEmails WHERE id = @id');
+      .input('id',    sql.NVarChar, id)
+      .input('color', sql.NVarChar, color ?? null)
+      .query('UPDATE TaskDomain SET color = @color WHERE id = @id');
     if (result.rowsAffected[0] === 0) return res.status(404).json({ error: 'Domain not found' });
     res.json({ success: true });
   } catch (err) {
@@ -196,7 +492,7 @@ app.patch('/domains/:id', async (req, res) => {
   }
 });
 
-app.patch('/domains/:id/name', async (req, res) => {
+app.patch('/domains/:id/name', requireAuth, requireMember, async (req, res) => {
   const { id } = req.params;
   const { name } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Name required' });
@@ -213,7 +509,7 @@ app.patch('/domains/:id/name', async (req, res) => {
   }
 });
 
-app.delete('/domains/:id', async (req, res) => {
+app.delete('/domains/:id', requireAuth, requirePilot, async (req, res) => {
   const { id } = req.params;
   try {
     const p = await getPool();
@@ -234,6 +530,10 @@ app.delete('/domains/:id', async (req, res) => {
       .input('domainId', sql.NVarChar, id)
       .query('DELETE FROM Task WHERE domainId = @domainId');
 
+    await p.request()
+      .input('id', sql.NVarChar, id)
+      .query('DELETE FROM OrbitMember WHERE orbitId = @id');
+
     const result = await p.request()
       .input('id', sql.NVarChar, id)
       .query('DELETE FROM TaskDomain WHERE id = @id');
@@ -246,34 +546,224 @@ app.delete('/domains/:id', async (req, res) => {
 });
 
 // -----------------------------------------------------------------------
+// OrbitMember (Pilot / Co-Pilot Verwaltung)
+// -----------------------------------------------------------------------
+
+app.get('/domains/:id/members', requireAuth, requireMember, async (req, res) => {
+  try {
+    const p = await getPool();
+    const result = await p.request()
+      .input('orbitId', sql.NVarChar, req.params.id)
+      .query(`SELECT id, orbitId, userId, email, role, status, invitedAt, joinedAt
+              FROM OrbitMember WHERE orbitId = @orbitId ORDER BY role DESC, joinedAt ASC`);
+    res.json(result.recordset);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/domains/:id/members', requireAuth, requirePilot, async (req, res) => {
+  const orbitId = req.params.id;
+  const { email } = req.body;
+  if (!email?.trim()) return res.status(400).json({ error: 'E-Mail erforderlich' });
+  const inviteEmail = email.trim().toLowerCase();
+
+  if (inviteEmail === req.user.email) {
+    return res.status(400).json({ error: 'Du bist bereits Pilot dieses Orbits' });
+  }
+
+  try {
+    const p = await getPool();
+
+    // Orbit-Name für E-Mail
+    const orbitResult = await p.request()
+      .input('id', sql.NVarChar, orbitId)
+      .query('SELECT name FROM TaskDomain WHERE id = @id');
+    if (orbitResult.recordset.length === 0) return res.status(404).json({ error: 'Orbit nicht gefunden' });
+    const orbitName = orbitResult.recordset[0].name;
+
+    // Prüfen ob bereits Mitglied
+    const existing = await p.request()
+      .input('orbitId', sql.NVarChar, orbitId)
+      .input('email',   sql.NVarChar, inviteEmail)
+      .query('SELECT id, status FROM OrbitMember WHERE orbitId = @orbitId AND email = @email');
+    if (existing.recordset.length > 0) {
+      return res.status(409).json({ error: 'Diese Person ist bereits Mitglied dieses Orbits' });
+    }
+
+    // Prüfen ob Nutzer schon registriert
+    const userResult = await p.request()
+      .input('email', sql.NVarChar, inviteEmail)
+      .query('SELECT id FROM AppUser WHERE email = @email');
+
+    const memberId = uuidv4();
+
+    if (userResult.recordset.length > 0) {
+      // Nutzer existiert → direkt als aktiver Co-Pilot hinzufügen
+      const existingUserId = userResult.recordset[0].id;
+      await p.request()
+        .input('id',       sql.NVarChar,  memberId)
+        .input('orbitId',  sql.NVarChar,  orbitId)
+        .input('userId',   sql.NVarChar,  existingUserId)
+        .input('email',    sql.NVarChar,  inviteEmail)
+        .query(`INSERT INTO OrbitMember (id, orbitId, userId, email, role, status, invitedAt, joinedAt)
+                VALUES (@id, @orbitId, @userId, @email, 'copilot', 'active', GETUTCDATE(), GETUTCDATE())`);
+
+      // Benachrichtigungs-E-Mail
+      sendMail(
+        inviteEmail,
+        `OrgaSphere: Du wurdest zum Orbit "${orbitName}" hinzugefügt`,
+        `<h2>OrgaSphere</h2>
+         <p>Du wurdest als <strong>Co-Pilot</strong> zum Orbit <strong>"${orbitName}"</strong> hinzugefügt.</p>
+         <p>Öffne die OrgaSphere-App und melde dich an, um loszulegen.</p>`
+      ).catch(err => console.error('Benachrichtigungsmail fehlgeschlagen:', err.message));
+
+      res.json({ status: 'added', memberId });
+    } else {
+      // Nutzer nicht registriert → Einladung per E-Mail
+      const inviteToken = uuidv4();
+      const baseUrl = process.env.APP_BASE_URL || `https://orga-sphere-api-dev-f5a0dtenanhefwb2.westeurope-01.azurewebsites.net`;
+      const inviteLink = `${baseUrl}/invite?token=${inviteToken}`;
+
+      await p.request()
+        .input('id',          sql.NVarChar,  memberId)
+        .input('orbitId',     sql.NVarChar,  orbitId)
+        .input('email',       sql.NVarChar,  inviteEmail)
+        .input('inviteToken', sql.NVarChar,  inviteToken)
+        .query(`INSERT INTO OrbitMember (id, orbitId, userId, email, role, status, inviteToken, invitedAt)
+                VALUES (@id, @orbitId, NULL, @email, 'copilot', 'pending', @inviteToken, GETUTCDATE())`);
+
+      sendMail(
+        inviteEmail,
+        `OrgaSphere: Einladung zum Orbit "${orbitName}"`,
+        `<h2>OrgaSphere</h2>
+         <p>Du wurdest als <strong>Co-Pilot</strong> zum Orbit <strong>"${orbitName}"</strong> eingeladen.</p>
+         <p><a href="${inviteLink}" style="background:#512DA8;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block;margin-top:12px">Einladung annehmen</a></p>
+         <p style="color:#666;font-size:12px;margin-top:16px">Oder kopiere diesen Link in deinen Browser:<br>${inviteLink}</p>`
+      ).catch(err => console.error('Einladungsmail fehlgeschlagen:', err.message));
+
+      res.json({ status: 'invited', memberId });
+    }
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/domains/:id/members/:memberId/suspend', requireAuth, requirePilot, async (req, res) => {
+  const { memberId } = req.params;
+  try {
+    const p = await getPool();
+    // Pilot kann sich nicht selbst sperren
+    const memberCheck = await p.request()
+      .input('id', sql.NVarChar, memberId)
+      .query('SELECT role FROM OrbitMember WHERE id = @id');
+    if (memberCheck.recordset[0]?.role === 'pilot') {
+      return res.status(400).json({ error: 'Der Pilot kann nicht gesperrt werden' });
+    }
+    await p.request()
+      .input('id', sql.NVarChar, memberId)
+      .query("UPDATE OrbitMember SET status = 'suspended' WHERE id = @id");
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.patch('/domains/:id/members/:memberId/reactivate', requireAuth, requirePilot, async (req, res) => {
+  const { memberId } = req.params;
+  try {
+    const p = await getPool();
+    await p.request()
+      .input('id', sql.NVarChar, memberId)
+      .query("UPDATE OrbitMember SET status = 'active' WHERE id = @id AND role = 'copilot'");
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/domains/:id/members/:memberId', requireAuth, requirePilot, async (req, res) => {
+  const { memberId } = req.params;
+  try {
+    const p = await getPool();
+    const memberCheck = await p.request()
+      .input('id', sql.NVarChar, memberId)
+      .query('SELECT role FROM OrbitMember WHERE id = @id');
+    if (memberCheck.recordset[0]?.role === 'pilot') {
+      return res.status(400).json({ error: 'Der Pilot kann nicht entfernt werden' });
+    }
+    await p.request()
+      .input('id', sql.NVarChar, memberId)
+      .query('DELETE FROM OrbitMember WHERE id = @id');
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// -----------------------------------------------------------------------
 // Tasks
 // -----------------------------------------------------------------------
 
-app.get('/tasks', async (req, res) => {
+// Hilfsfunktion: alle Orbit-IDs abrufen, auf die der User Zugriff hat
+async function getUserOrbitIds(p, userId) {
+  const result = await p.request()
+    .input('userId', sql.NVarChar, userId)
+    .query(`SELECT orbitId FROM OrbitMember WHERE userId = @userId AND status = 'active'`);
+  return result.recordset.map(r => r.orbitId);
+}
+
+app.get('/tasks', requireAuth, async (req, res) => {
   try {
     const p = await getPool();
-    const result = await p.request().query("SELECT * FROM Task WHERE status != 'done' ORDER BY dueDate ASC");
+    const orbitIds = await getUserOrbitIds(p, req.user.userId);
+    if (orbitIds.length === 0) return res.json([]);
+
+    const placeholders = orbitIds.map((_, i) => `@oid${i}`).join(',');
+    const request = p.request();
+    orbitIds.forEach((id, i) => request.input(`oid${i}`, sql.NVarChar, id));
+    const result = await request.query(
+      `SELECT * FROM Task WHERE status != 'done' AND domainId IN (${placeholders}) ORDER BY dueDate ASC`
+    );
     res.json(result.recordset);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.get('/tasks/archived', async (req, res) => {
+app.get('/tasks/archived', requireAuth, async (req, res) => {
   try {
     const p = await getPool();
-    const result = await p.request().query("SELECT * FROM Task WHERE status = 'done' ORDER BY completedAt DESC");
+    const orbitIds = await getUserOrbitIds(p, req.user.userId);
+    if (orbitIds.length === 0) return res.json([]);
+
+    const placeholders = orbitIds.map((_, i) => `@oid${i}`).join(',');
+    const request = p.request();
+    orbitIds.forEach((id, i) => request.input(`oid${i}`, sql.NVarChar, id));
+    const result = await request.query(
+      `SELECT * FROM Task WHERE status = 'done' AND domainId IN (${placeholders}) ORDER BY completedAt DESC`
+    );
     res.json(result.recordset);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/tasks', async (req, res) => {
+app.post('/tasks', requireAuth, async (req, res) => {
   const { domainId, title, description, startDate, dueDate, recurrenceFrequency, recurrenceInterval } = req.body;
   const id = uuidv4();
   try {
     const p = await getPool();
+
+    // Zugriffsprüfung: User muss Mitglied des Orbits sein
+    const access = await p.request()
+      .input('orbitId', sql.NVarChar, domainId)
+      .input('userId',  sql.NVarChar, req.user.userId)
+      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
+    if (access.recordset.length === 0) {
+      return res.status(403).json({ error: 'Kein Zugriff auf diesen Orbit' });
+    }
+
     const result = await p.request()
       .input('id',                  sql.NVarChar,  id)
       .input('domainId',            sql.NVarChar,  domainId)
@@ -295,20 +785,22 @@ app.post('/tasks', async (req, res) => {
   }
 });
 
-// Mark task as done; auto-creates next capsule for recurring tasks
-app.patch('/tasks/:id/done', async (req, res) => {
+app.patch('/tasks/:id/done', requireAuth, async (req, res) => {
   const { id } = req.params;
   try {
     const p = await getPool();
-
     const taskResult = await p.request()
       .input('id', sql.NVarChar, id)
       .query('SELECT * FROM Task WHERE id = @id');
-
-    if (taskResult.recordset.length === 0) {
-      return res.status(404).json({ error: 'Task not found' });
-    }
+    if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
     const task = taskResult.recordset[0];
+
+    // Zugriffsprüfung
+    const access = await p.request()
+      .input('orbitId', sql.NVarChar, task.domainId)
+      .input('userId',  sql.NVarChar, req.user.userId)
+      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
+    if (access.recordset.length === 0) return res.status(403).json({ error: 'Kein Zugriff' });
 
     const now = new Date();
     await p.request()
@@ -317,59 +809,68 @@ app.patch('/tasks/:id/done', async (req, res) => {
       .query("UPDATE Task SET status = 'done', completedAt = @completedAt WHERE id = @id");
 
     const nextTask = await createNextCapsuleIfNeeded(p, task);
-
     res.json({ success: true, nextTask: nextTask || null });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Set task to inProgress
-app.patch('/tasks/:id/start', async (req, res) => {
+app.patch('/tasks/:id/start', requireAuth, async (req, res) => {
   const { id } = req.params;
   try {
     const p = await getPool();
+    const taskResult = await p.request().input('id', sql.NVarChar, id).query('SELECT domainId FROM Task WHERE id = @id');
+    if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
+    const access = await p.request()
+      .input('orbitId', sql.NVarChar, taskResult.recordset[0].domainId)
+      .input('userId',  sql.NVarChar, req.user.userId)
+      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
+    if (access.recordset.length === 0) return res.status(403).json({ error: 'Kein Zugriff' });
+
     const result = await p.request()
       .input('id', sql.NVarChar, id)
       .query("UPDATE Task SET status = 'inProgress' WHERE id = @id AND status = 'open'");
-    if (result.rowsAffected[0] === 0) {
-      return res.status(404).json({ error: 'Task not found or not open' });
-    }
+    if (result.rowsAffected[0] === 0) return res.status(404).json({ error: 'Task not found or not open' });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Reopen a completed task (undo done)
-app.patch('/tasks/:id/reopen', async (req, res) => {
+app.patch('/tasks/:id/reopen', requireAuth, async (req, res) => {
   const { id } = req.params;
   try {
     const p = await getPool();
-    const taskResult = await p.request()
-      .input('id', sql.NVarChar, id)
-      .query('SELECT * FROM Task WHERE id = @id');
-
-    if (taskResult.recordset.length === 0) {
-      return res.status(404).json({ error: 'Task not found' });
-    }
+    const taskResult = await p.request().input('id', sql.NVarChar, id).query('SELECT domainId FROM Task WHERE id = @id');
+    if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
+    const access = await p.request()
+      .input('orbitId', sql.NVarChar, taskResult.recordset[0].domainId)
+      .input('userId',  sql.NVarChar, req.user.userId)
+      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
+    if (access.recordset.length === 0) return res.status(403).json({ error: 'Kein Zugriff' });
 
     await p.request()
       .input('id', sql.NVarChar, id)
       .query("UPDATE Task SET status = 'open', completedAt = NULL WHERE id = @id");
-
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Update task description (auto-saved inline edit)
-app.patch('/tasks/:id/description', async (req, res) => {
+app.patch('/tasks/:id/description', requireAuth, async (req, res) => {
   const { id } = req.params;
   const { description } = req.body;
   try {
     const p = await getPool();
+    const taskResult = await p.request().input('id', sql.NVarChar, id).query('SELECT domainId FROM Task WHERE id = @id');
+    if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
+    const access = await p.request()
+      .input('orbitId', sql.NVarChar, taskResult.recordset[0].domainId)
+      .input('userId',  sql.NVarChar, req.user.userId)
+      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
+    if (access.recordset.length === 0) return res.status(403).json({ error: 'Kein Zugriff' });
+
     const result = await p.request()
       .input('id',          sql.NVarChar, id)
       .input('description', sql.NVarChar, description ?? '')
@@ -381,32 +882,52 @@ app.patch('/tasks/:id/description', async (req, res) => {
   }
 });
 
-// Set or clear orbit-wide reminder for a task
-app.patch('/tasks/:id/reminder', async (req, res) => {
+app.patch('/tasks/:id/reminder', requireAuth, async (req, res) => {
   const { id } = req.params;
   const { reminderAt } = req.body;
   try {
     const p = await getPool();
+    const taskResult = await p.request().input('id', sql.NVarChar, id).query('SELECT domainId FROM Task WHERE id = @id');
+    if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
+    const access = await p.request()
+      .input('orbitId', sql.NVarChar, taskResult.recordset[0].domainId)
+      .input('userId',  sql.NVarChar, req.user.userId)
+      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
+    if (access.recordset.length === 0) return res.status(403).json({ error: 'Kein Zugriff' });
+
     const result = await p.request()
       .input('id',         sql.NVarChar,  id)
       .input('reminderAt', sql.DateTime2, reminderAt ? new Date(reminderAt) : null)
       .query('UPDATE Task SET reminderAt = @reminderAt, reminderEmailSentAt = NULL WHERE id = @id');
-    if (result.rowsAffected[0] === 0) {
-      return res.status(404).json({ error: 'Task not found' });
-    }
+    if (result.rowsAffected[0] === 0) return res.status(404).json({ error: 'Task not found' });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
-// Move a task to a different orbit
-app.patch('/tasks/:id/domain', async (req, res) => {
+app.patch('/tasks/:id/domain', requireAuth, async (req, res) => {
   const { id } = req.params;
   const { domainId } = req.body;
   if (!domainId) return res.status(400).json({ error: 'domainId required' });
   try {
     const p = await getPool();
+    // Zugriff auf Quell-Task und Ziel-Orbit prüfen
+    const taskResult = await p.request().input('id', sql.NVarChar, id).query('SELECT domainId FROM Task WHERE id = @id');
+    if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
+
+    const sourceAccess = await p.request()
+      .input('orbitId', sql.NVarChar, taskResult.recordset[0].domainId)
+      .input('userId',  sql.NVarChar, req.user.userId)
+      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
+    const targetAccess = await p.request()
+      .input('orbitId', sql.NVarChar, domainId)
+      .input('userId',  sql.NVarChar, req.user.userId)
+      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
+    if (sourceAccess.recordset.length === 0 || targetAccess.recordset.length === 0) {
+      return res.status(403).json({ error: 'Kein Zugriff' });
+    }
+
     const result = await p.request()
       .input('id',       sql.NVarChar, id)
       .input('domainId', sql.NVarChar, domainId)
@@ -418,29 +939,24 @@ app.patch('/tasks/:id/domain', async (req, res) => {
   }
 });
 
-// Delete a task and its log entries
-app.delete('/tasks/:id', async (req, res) => {
+app.delete('/tasks/:id', requireAuth, async (req, res) => {
   const { id } = req.params;
   try {
     const p = await getPool();
+    const taskResult = await p.request().input('id', sql.NVarChar, id).query('SELECT domainId FROM Task WHERE id = @id');
+    if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
+    const access = await p.request()
+      .input('orbitId', sql.NVarChar, taskResult.recordset[0].domainId)
+      .input('userId',  sql.NVarChar, req.user.userId)
+      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
+    if (access.recordset.length === 0) return res.status(403).json({ error: 'Kein Zugriff' });
 
-    const taskResult = await p.request()
-      .input('id', sql.NVarChar, id)
-      .query('SELECT id FROM Task WHERE id = @id');
-
-    if (taskResult.recordset.length === 0) {
-      return res.status(404).json({ error: 'Task not found' });
-    }
-
-    // Detach successor tasks before deleting (they keep their own data, just lose the chain link)
     await p.request()
       .input('id', sql.NVarChar, id)
       .query('UPDATE Task SET previousTaskId = NULL WHERE previousTaskId = @id');
-
     await p.request()
       .input('id', sql.NVarChar, id)
       .query('DELETE FROM TaskLogEntry WHERE taskId = @id');
-
     await p.request()
       .input('id', sql.NVarChar, id)
       .query('DELETE FROM Task WHERE id = @id');
@@ -455,10 +971,19 @@ app.delete('/tasks/:id', async (req, res) => {
 // Logs
 // -----------------------------------------------------------------------
 
-app.get('/logs/:taskId', async (req, res) => {
+app.get('/logs/:taskId', requireAuth, async (req, res) => {
   const { taskId } = req.params;
   try {
     const p = await getPool();
+    // Zugriffsprüfung via Task → Orbit
+    const taskResult = await p.request().input('id', sql.NVarChar, taskId).query('SELECT domainId FROM Task WHERE id = @id');
+    if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
+    const access = await p.request()
+      .input('orbitId', sql.NVarChar, taskResult.recordset[0].domainId)
+      .input('userId',  sql.NVarChar, req.user.userId)
+      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
+    if (access.recordset.length === 0) return res.status(403).json({ error: 'Kein Zugriff' });
+
     const result = await p.request()
       .input('taskId', sql.NVarChar, taskId)
       .query('SELECT * FROM TaskLogEntry WHERE taskId = @taskId ORDER BY timestamp DESC');
@@ -468,23 +993,30 @@ app.get('/logs/:taskId', async (req, res) => {
   }
 });
 
-app.post('/logs', async (req, res) => {
-  const { taskId, user, text } = req.body;
+app.post('/logs', requireAuth, async (req, res) => {
+  const { taskId, text } = req.body;
   const id  = uuidv4();
   const now = new Date();
   try {
     const p = await getPool();
+    const taskResult = await p.request().input('id', sql.NVarChar, taskId).query('SELECT domainId FROM Task WHERE id = @id');
+    if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
+    const access = await p.request()
+      .input('orbitId', sql.NVarChar, taskResult.recordset[0].domainId)
+      .input('userId',  sql.NVarChar, req.user.userId)
+      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
+    if (access.recordset.length === 0) return res.status(403).json({ error: 'Kein Zugriff' });
+
     const result = await p.request()
       .input('id',        sql.NVarChar,  id)
       .input('taskId',    sql.NVarChar,  taskId)
-      .input('user',      sql.NVarChar,  user)
+      .input('user',      sql.NVarChar,  req.user.email)
       .input('text',      sql.NVarChar,  text)
       .input('timestamp', sql.DateTime2, now)
       .query(`INSERT INTO TaskLogEntry (id, taskId, [user], [text], timestamp)
               OUTPUT INSERTED.*
               VALUES (@id, @taskId, @user, @text, @timestamp)`);
 
-    // Auto-set to inProgress on first log entry
     const update = await p.request()
       .input('taskId', sql.NVarChar, taskId)
       .query("UPDATE Task SET status = 'inProgress' WHERE id = @taskId AND status = 'open'");
@@ -497,9 +1029,7 @@ app.post('/logs', async (req, res) => {
 });
 
 // -----------------------------------------------------------------------
-// Scheduler: auto-create next capsule when a recurring task's next
-// start date has been reached and no successor exists yet.
-// Runs every hour.
+// Scheduler
 // -----------------------------------------------------------------------
 
 async function runScheduler() {
@@ -508,7 +1038,7 @@ async function runScheduler() {
   try {
     const p = await getPool();
 
-    // 1. Recurring tasks: auto-create next capsule if due
+    // 1. Wiederkehrende Tasks: nächste Kapsel anlegen wenn fällig
     const recurring = await p.request().query(
       "SELECT * FROM Task WHERE status != 'done' AND recurrenceFrequency != 'none'"
     );
@@ -522,10 +1052,10 @@ async function runScheduler() {
       }
     }
 
-    // 2. Reminders: send e-mail for due reminders not yet sent
+    // 2. Erinnerungsmails: an alle aktiven Mitglieder des Orbits senden
     const dueReminders = await p.request()
       .input('now', sql.DateTime2, now)
-      .query(`SELECT t.*, d.name AS domainName, d.notificationEmails
+      .query(`SELECT t.*, d.name AS domainName
               FROM Task t
               JOIN TaskDomain d ON t.domainId = d.id
               WHERE t.reminderAt IS NOT NULL
@@ -535,17 +1065,21 @@ async function runScheduler() {
 
     console.log(`Scheduler: ${dueReminders.recordset.length} due reminder(s) found`);
     for (const task of dueReminders.recordset) {
-      const emails = (task.notificationEmails || '').split(',').map(e => e.trim()).filter(Boolean);
-      console.log(`Scheduler: processing reminder for task ${task.id} ("${task.title}"), reminderAt=${task.reminderAt}, emails=${emails.length}`);
+      // E-Mail-Adressen aller aktiven Mitglieder des Orbits
+      const membersResult = await p.request()
+        .input('orbitId', sql.NVarChar, task.domainId)
+        .query(`SELECT email FROM OrbitMember WHERE orbitId = @orbitId AND status = 'active'`);
+      const emails = membersResult.recordset.map(r => r.email).filter(Boolean);
+
+      console.log(`Scheduler: task ${task.id} ("${task.title}"), reminderAt=${task.reminderAt}, recipients=${emails.length}`);
       if (emails.length > 0) {
         try {
           await sendReminderEmail(emails, task, task.domainName);
-          console.log(`Scheduler: reminder e-mail sent for task ${task.id} to ${emails.join(', ')}`);
+          console.log(`Scheduler: reminder sent to ${emails.join(', ')}`);
         } catch (mailErr) {
           console.error(`Scheduler: e-mail failed for task ${task.id}:`, mailErr.message);
         }
       }
-      // Mark as sent regardless of mail success to avoid infinite retry loops
       await p.request()
         .input('id',  sql.NVarChar,  task.id)
         .input('now', sql.DateTime2, now)

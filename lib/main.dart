@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'app_globals.dart';
 import 'screens/screens.dart';
+import 'services/auth_service.dart';
+import 'services/task_service.dart';
 import 'theme/app_theme.dart';
 
 void main() {
@@ -18,11 +20,10 @@ class OrgaSphereApp extends StatelessWidget {
       theme: AppTheme.light,
       onGenerateRoute: (settings) {
         switch (settings.name) {
-          case '/':
-            return MaterialPageRoute(builder: (_) => const TaskListScreen());
           case '/task-detail':
             final taskId = settings.arguments as String;
-            return MaterialPageRoute(builder: (_) => TaskDetailScreen(taskId: taskId));
+            return MaterialPageRoute(
+                builder: (_) => TaskDetailScreen(taskId: taskId));
           case '/sphere-list':
             final args = settings.arguments as Map<String, dynamic>;
             return MaterialPageRoute(
@@ -32,18 +33,58 @@ class OrgaSphereApp extends StatelessWidget {
               ),
             );
           case '/create-domain':
-            return MaterialPageRoute(builder: (_) => const CreateDomainScreen());
+            return MaterialPageRoute(
+                builder: (_) => const CreateDomainScreen());
           case '/create-task':
             return MaterialPageRoute(
-              builder: (_) => CreateTaskScreen(
-                domainId: settings.arguments as String?,
-              ),
+              builder: (_) =>
+                  CreateTaskScreen(domainId: settings.arguments as String?),
             );
           default:
-            return MaterialPageRoute(builder: (_) => const TaskListScreen());
+            return null;
         }
       },
-      home: const TaskListScreen(),
+      home: const AuthGate(),
     );
+  }
+}
+
+class AuthGate extends StatefulWidget {
+  const AuthGate({super.key});
+
+  @override
+  State<AuthGate> createState() => _AuthGateState();
+}
+
+class _AuthGateState extends State<AuthGate> {
+  bool? _loggedIn;
+
+  @override
+  void initState() {
+    super.initState();
+    _init();
+  }
+
+  Future<void> _init() async {
+    await AuthService.init();
+    if (mounted) setState(() => _loggedIn = AuthService.isLoggedIn);
+  }
+
+  void _onLogin() => setState(() => _loggedIn = true);
+
+  void _onLogout() {
+    TaskService.reset();
+    setState(() => _loggedIn = false);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_loggedIn == null) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+    if (!_loggedIn!) {
+      return LoginScreen(onSuccess: _onLogin);
+    }
+    return TaskListScreen(onLogout: _onLogout);
   }
 }

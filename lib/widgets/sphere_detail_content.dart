@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../models/models.dart';
+import '../services/auth_service.dart';
 import '../services/task_service.dart';
 import '../theme/app_colors.dart';
 import 'reminder_picker_dialog.dart';
@@ -28,7 +29,6 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
   final TaskService _taskService = TaskService();
   late Task? _task;
   final _logTextController = TextEditingController();
-  final _userNameController = TextEditingController(text: 'Steven');
   late final TextEditingController _descriptionController;
   late final FocusNode _descriptionFocusNode;
   String _lastSavedDescription = '';
@@ -47,7 +47,6 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
   @override
   void dispose() {
     _logTextController.dispose();
-    _userNameController.dispose();
     _descriptionController.dispose();
     _descriptionFocusNode.dispose();
     super.dispose();
@@ -83,7 +82,6 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     try {
       await _taskService.addLogEntry(
         widget.taskId,
-        _userNameController.text.trim(),
         _logTextController.text.trim(),
       );
       _logTextController.clear();
@@ -685,15 +683,15 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text('Neuer Eintrag', style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _userNameController,
-              decoration: InputDecoration(
-                labelText: 'Ihr Name',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
-              ),
+            Row(
+              children: [
+                Text('Neuer Eintrag', style: Theme.of(context).textTheme.titleSmall),
+                const Spacer(),
+                Text(
+                  AuthService.email ?? '',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
+                ),
+              ],
             ),
             const SizedBox(height: 12),
             TextField(

@@ -2,7 +2,7 @@ import '../models/models.dart';
 import 'api_service.dart';
 
 class TaskService {
-  static final TaskService _instance = TaskService._internal();
+  static TaskService? _instance;
 
   final List<TaskDomain> _domains = [];
   final List<Task> _tasks = [];
@@ -13,13 +13,20 @@ class TaskService {
     _ready = _loadAll();
   }
 
-  factory TaskService() => _instance;
+  factory TaskService() {
+    _instance ??= TaskService._internal();
+    return _instance!;
+  }
+
+  static void reset() {
+    _instance = null;
+  }
 
   Future<void> get ready => _ready;
 
   Future<void> _loadAll() async {
     final domains = await ApiService.getDomains();
-    final active   = await ApiService.getActiveTasks();
+    final active = await ApiService.getActiveTasks();
     final archived = await ApiService.getArchivedTasks();
 
     _domains
@@ -107,12 +114,8 @@ class TaskService {
   Future<void> markAsDone(String taskId) async {
     final nextTask = await ApiService.markAsDone(taskId);
     final task = getTaskById(taskId);
-    if (task != null) {
-      task.markAsDone();
-    }
-    if (nextTask != null) {
-      _tasks.add(nextTask);
-    }
+    if (task != null) task.markAsDone();
+    if (nextTask != null) _tasks.add(nextTask);
   }
 
   Future<void> reopenTask(String taskId) async {
@@ -135,8 +138,8 @@ class TaskService {
     if (task != null) task.status = TaskStatus.inProgress;
   }
 
-  Future<void> addLogEntry(String taskId, String user, String text) async {
-    final result = await ApiService.addLogEntry(taskId, user, text);
+  Future<void> addLogEntry(String taskId, String text) async {
+    final result = await ApiService.addLogEntry(taskId, text);
     final task = getTaskById(taskId);
     task?.addLogEntry(result.entry);
     if (result.newTaskStatus != null) {
@@ -161,15 +164,8 @@ class TaskService {
   }
 
   Future<TaskDomain> createDomain(
-    String name,
-    String description,
-    String color, {
-    String notificationEmails = '',
-  }) async {
-    final domain = await ApiService.createDomain(
-      name, description, color,
-      notificationEmails: notificationEmails,
-    );
+      String name, String description, String color) async {
+    final domain = await ApiService.createDomain(name, description, color);
     _domains.add(domain);
     return domain;
   }
@@ -184,7 +180,6 @@ class TaskService {
         name: name,
         description: d.description,
         colorHex: d.colorHex,
-        notificationEmails: d.notificationEmails,
       );
     }
   }
@@ -199,20 +194,5 @@ class TaskService {
     await ApiService.moveTask(taskId, domainId);
     final task = getTaskById(taskId);
     if (task != null) task.domainId = domainId;
-  }
-
-  Future<void> updateDomainEmails(String domainId, String notificationEmails) async {
-    await ApiService.updateDomainEmails(domainId, notificationEmails);
-    final idx = _domains.indexWhere((d) => d.id == domainId);
-    if (idx != -1) {
-      final d = _domains[idx];
-      _domains[idx] = TaskDomain(
-        id: d.id,
-        name: d.name,
-        description: d.description,
-        colorHex: d.colorHex,
-        notificationEmails: notificationEmails,
-      );
-    }
   }
 }

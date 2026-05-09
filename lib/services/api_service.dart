@@ -1,27 +1,158 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
 import '../models/models.dart';
+import 'auth_service.dart';
 
 class ApiService {
-  static const String _baseUrl =
-      'https://orga-sphere-api-dev-f5a0dtenanhefwb2.westeurope-01.azurewebsites.net';
+  static String get _baseUrl => AuthService.baseUrl;
+
+  static Map<String, String> get _headers => AuthService.authHeaders;
+
+  static void _checkStatus(http.Response response) {
+    if (response.statusCode == 401) {
+      throw const UnauthorizedException();
+    }
+    if (response.statusCode < 200 || response.statusCode >= 300) {
+      String msg = 'API-Fehler ${response.statusCode}';
+      try {
+        final body = jsonDecode(response.body) as Map<String, dynamic>;
+        msg = body['error'] as String? ?? msg;
+      } catch (_) {}
+      throw Exception(msg);
+    }
+  }
+
+  // -----------------------------------------------------------------------
+  // Auth
+  // -----------------------------------------------------------------------
+
+  static Future<Map<String, dynamic>> login(
+      String email, String password) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/auth/login'),
+      headers: _headers,
+      body: jsonEncode({'email': email, 'password': password}),
+    );
+    _checkStatus(response);
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  static Future<Map<String, dynamic>> register(
+      String email, String password) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/auth/register'),
+      headers: _headers,
+      body: jsonEncode({'email': email, 'password': password}),
+    );
+    _checkStatus(response);
+    return jsonDecode(response.body) as Map<String, dynamic>;
+  }
+
+  // -----------------------------------------------------------------------
+  // Domains
+  // -----------------------------------------------------------------------
 
   static Future<List<TaskDomain>> getDomains() async {
-    final response = await http.get(Uri.parse('$_baseUrl/domains'));
+    final response = await http.get(Uri.parse('$_baseUrl/domains'),
+        headers: _headers);
     _checkStatus(response);
     final List<dynamic> data = jsonDecode(response.body);
     return data.map((j) => TaskDomain.fromJson(j as Map<String, dynamic>)).toList();
   }
 
+  static Future<TaskDomain> createDomain(
+      String name, String description, String color) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/domains'),
+      headers: _headers,
+      body: jsonEncode({'name': name, 'description': description, 'color': color}),
+    );
+    _checkStatus(response);
+    return TaskDomain.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  static Future<void> renameDomain(String domainId, String name) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/domains/$domainId/name'),
+      headers: _headers,
+      body: jsonEncode({'name': name}),
+    );
+    _checkStatus(response);
+  }
+
+  static Future<void> deleteDomain(String domainId) async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/domains/$domainId'),
+      headers: _headers,
+    );
+    _checkStatus(response);
+  }
+
+  // -----------------------------------------------------------------------
+  // OrbitMembers
+  // -----------------------------------------------------------------------
+
+  static Future<List<OrbitMember>> getOrbitMembers(String orbitId) async {
+    final response = await http.get(
+      Uri.parse('$_baseUrl/domains/$orbitId/members'),
+      headers: _headers,
+    );
+    _checkStatus(response);
+    final List<dynamic> data = jsonDecode(response.body);
+    return data.map((j) => OrbitMember.fromJson(j as Map<String, dynamic>)).toList();
+  }
+
+  static Future<String> inviteCoPilot(String orbitId, String email) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/domains/$orbitId/members'),
+      headers: _headers,
+      body: jsonEncode({'email': email}),
+    );
+    _checkStatus(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return body['status'] as String; // 'added' or 'invited'
+  }
+
+  static Future<void> suspendCoPilot(String orbitId, String memberId) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/domains/$orbitId/members/$memberId/suspend'),
+      headers: _headers,
+    );
+    _checkStatus(response);
+  }
+
+  static Future<void> reactivateCoPilot(
+      String orbitId, String memberId) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/domains/$orbitId/members/$memberId/reactivate'),
+      headers: _headers,
+    );
+    _checkStatus(response);
+  }
+
+  static Future<void> removeCoPilot(String orbitId, String memberId) async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/domains/$orbitId/members/$memberId'),
+      headers: _headers,
+    );
+    _checkStatus(response);
+  }
+
+  // -----------------------------------------------------------------------
+  // Tasks
+  // -----------------------------------------------------------------------
+
   static Future<List<Task>> getActiveTasks() async {
-    final response = await http.get(Uri.parse('$_baseUrl/tasks'));
+    final response =
+        await http.get(Uri.parse('$_baseUrl/tasks'), headers: _headers);
     _checkStatus(response);
     final List<dynamic> data = jsonDecode(response.body);
     return data.map((j) => Task.fromJson(j as Map<String, dynamic>)).toList();
   }
 
   static Future<List<Task>> getArchivedTasks() async {
-    final response = await http.get(Uri.parse('$_baseUrl/tasks/archived'));
+    final response = await http.get(
+        Uri.parse('$_baseUrl/tasks/archived'), headers: _headers);
     _checkStatus(response);
     final List<dynamic> data = jsonDecode(response.body);
     return data.map((j) => Task.fromJson(j as Map<String, dynamic>)).toList();
@@ -38,7 +169,7 @@ class ApiService {
   }) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/tasks'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers,
       body: jsonEncode({
         'domainId': domainId,
         'title': title,
@@ -56,7 +187,7 @@ class ApiService {
   static Future<Task?> markAsDone(String taskId) async {
     final response = await http.patch(
       Uri.parse('$_baseUrl/tasks/$taskId/done'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers,
     );
     _checkStatus(response);
     final body = jsonDecode(response.body) as Map<String, dynamic>;
@@ -67,7 +198,7 @@ class ApiService {
   static Future<void> startTask(String taskId) async {
     final response = await http.patch(
       Uri.parse('$_baseUrl/tasks/$taskId/start'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers,
     );
     _checkStatus(response);
   }
@@ -75,7 +206,7 @@ class ApiService {
   static Future<void> reopenTask(String taskId) async {
     final response = await http.patch(
       Uri.parse('$_baseUrl/tasks/$taskId/reopen'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers,
     );
     _checkStatus(response);
   }
@@ -83,55 +214,7 @@ class ApiService {
   static Future<void> deleteTask(String taskId) async {
     final response = await http.delete(
       Uri.parse('$_baseUrl/tasks/$taskId'),
-      headers: {'Content-Type': 'application/json'},
-    );
-    _checkStatus(response);
-  }
-
-  static Future<TaskDomain> createDomain(
-    String name,
-    String description,
-    String color, {
-    String notificationEmails = '',
-  }) async {
-    final response = await http.post(
-      Uri.parse('$_baseUrl/domains'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'name': name,
-        'description': description,
-        'color': color,
-        'notificationEmails': notificationEmails.isEmpty ? null : notificationEmails,
-      }),
-    );
-    _checkStatus(response);
-    return TaskDomain.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
-  }
-
-  static Future<void> updateDomainEmails(String domainId, String notificationEmails) async {
-    final response = await http.patch(
-      Uri.parse('$_baseUrl/domains/$domainId'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({
-        'notificationEmails': notificationEmails.isEmpty ? null : notificationEmails,
-      }),
-    );
-    _checkStatus(response);
-  }
-
-  static Future<void> renameDomain(String domainId, String name) async {
-    final response = await http.patch(
-      Uri.parse('$_baseUrl/domains/$domainId/name'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'name': name}),
-    );
-    _checkStatus(response);
-  }
-
-  static Future<void> deleteDomain(String domainId) async {
-    final response = await http.delete(
-      Uri.parse('$_baseUrl/domains/$domainId'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers,
     );
     _checkStatus(response);
   }
@@ -139,39 +222,17 @@ class ApiService {
   static Future<void> moveTask(String taskId, String domainId) async {
     final response = await http.patch(
       Uri.parse('$_baseUrl/tasks/$taskId/domain'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers,
       body: jsonEncode({'domainId': domainId}),
     );
     _checkStatus(response);
   }
 
-  static Future<List<TaskLogEntry>> getLogs(String taskId) async {
-    final response = await http.get(Uri.parse('$_baseUrl/logs/$taskId'));
-    _checkStatus(response);
-    final List<dynamic> data = jsonDecode(response.body);
-    return data.map((j) => TaskLogEntry.fromJson(j as Map<String, dynamic>)).toList();
-  }
-
-  /// Returns the new log entry and optionally the new task status if it changed.
-  static Future<({TaskLogEntry entry, String? newTaskStatus})> addLogEntry(
-      String taskId, String user, String text) async {
-    final response = await http.post(
-      Uri.parse('$_baseUrl/logs'),
-      headers: {'Content-Type': 'application/json'},
-      body: jsonEncode({'taskId': taskId, 'user': user, 'text': text}),
-    );
-    _checkStatus(response);
-    final body = jsonDecode(response.body) as Map<String, dynamic>;
-    return (
-      entry: TaskLogEntry.fromJson(body),
-      newTaskStatus: body['taskStatus'] as String?,
-    );
-  }
-
-  static Future<void> updateTaskDescription(String taskId, String description) async {
+  static Future<void> updateTaskDescription(
+      String taskId, String description) async {
     final response = await http.patch(
       Uri.parse('$_baseUrl/tasks/$taskId/description'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers,
       body: jsonEncode({'description': description}),
     );
     _checkStatus(response);
@@ -180,15 +241,42 @@ class ApiService {
   static Future<void> setReminder(String taskId, DateTime? reminderAt) async {
     final response = await http.patch(
       Uri.parse('$_baseUrl/tasks/$taskId/reminder'),
-      headers: {'Content-Type': 'application/json'},
+      headers: _headers,
       body: jsonEncode({'reminderAt': reminderAt?.toUtc().toIso8601String()}),
     );
     _checkStatus(response);
   }
 
-  static void _checkStatus(http.Response response) {
-    if (response.statusCode < 200 || response.statusCode >= 300) {
-      throw Exception('API-Fehler ${response.statusCode}: ${response.body}');
-    }
+  // -----------------------------------------------------------------------
+  // Logs
+  // -----------------------------------------------------------------------
+
+  static Future<List<TaskLogEntry>> getLogs(String taskId) async {
+    final response = await http.get(
+        Uri.parse('$_baseUrl/logs/$taskId'), headers: _headers);
+    _checkStatus(response);
+    final List<dynamic> data = jsonDecode(response.body);
+    return data.map((j) => TaskLogEntry.fromJson(j as Map<String, dynamic>)).toList();
   }
+
+  static Future<({TaskLogEntry entry, String? newTaskStatus})> addLogEntry(
+      String taskId, String text) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/logs'),
+      headers: _headers,
+      body: jsonEncode({'taskId': taskId, 'text': text}),
+    );
+    _checkStatus(response);
+    final body = jsonDecode(response.body) as Map<String, dynamic>;
+    return (
+      entry: TaskLogEntry.fromJson(body),
+      newTaskStatus: body['taskStatus'] as String?,
+    );
+  }
+}
+
+class UnauthorizedException implements Exception {
+  const UnauthorizedException();
+  @override
+  String toString() => 'Sitzung abgelaufen. Bitte erneut anmelden.';
 }

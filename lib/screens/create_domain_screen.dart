@@ -2,21 +2,9 @@ import 'package:flutter/material.dart';
 import '../services/task_service.dart';
 
 const _kPaletteColors = [
-  '#FFC0CB', // Rosa
-  '#FFB6C1', // Hellrosa
-  '#FFDAB9', // Pfirsich
-  '#FFE4B5', // Maisgelb
-  '#FFFACD', // Zitrone
-  '#C1FFC1', // Hellgrün
-  '#98FB98', // Blassgrün
-  '#E0FFFF', // Hellcyan
-  '#AFEEEE', // Türkis
-  '#B0E0E6', // Puderblau
-  '#E6E6FA', // Lavendel
-  '#DDA0DD', // Pflaume
-  '#F5F5DC', // Beige
-  '#D3D3D3', // Hellgrau
-  '#F5F5F5', // Weiß
+  '#FFC0CB', '#FFB6C1', '#FFDAB9', '#FFE4B5', '#FFFACD',
+  '#C1FFC1', '#98FB98', '#E0FFFF', '#AFEEEE', '#B0E0E6',
+  '#E6E6FA', '#DDA0DD', '#F5F5DC', '#D3D3D3', '#F5F5F5',
 ];
 
 class CreateDomainScreen extends StatefulWidget {
@@ -30,7 +18,6 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
   final _formKey = GlobalKey<FormState>();
   final _nameController = TextEditingController();
   final _descController = TextEditingController();
-  final _emailsController = TextEditingController();
   String _selectedColor = '#E6E6FA';
   bool _saving = false;
 
@@ -38,7 +25,6 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
   void dispose() {
     _nameController.dispose();
     _descController.dispose();
-    _emailsController.dispose();
     super.dispose();
   }
 
@@ -50,14 +36,12 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
         _nameController.text.trim(),
         _descController.text.trim(),
         _selectedColor,
-        notificationEmails: _emailsController.text.trim(),
       );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Fehler: $e')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Fehler: $e')));
         setState(() => _saving = false);
       }
     }
@@ -101,19 +85,6 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
                     maxLines: 3,
                   ),
                   const SizedBox(height: 16),
-                  TextFormField(
-                    controller: _emailsController,
-                    decoration: const InputDecoration(
-                      labelText: 'Erinnerungs-E-Mails',
-                      hintText: 'max@beispiel.de, anna@beispiel.de',
-                      helperText: 'Kommagetrennt – erhalten E-Mail wenn ein Reminder fällig ist',
-                      border: OutlineInputBorder(),
-                      prefixIcon: Icon(Icons.email_outlined),
-                    ),
-                    keyboardType: TextInputType.emailAddress,
-                    autocorrect: false,
-                  ),
-                  const SizedBox(height: 16),
                   InputDecorator(
                     decoration: const InputDecoration(
                       labelText: 'Farbe',
@@ -144,7 +115,8 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
                                   ),
                                 ),
                                 child: isSelected
-                                    ? const Icon(Icons.check, size: 18, color: Colors.black54)
+                                    ? const Icon(Icons.check,
+                                        size: 18, color: Colors.black54)
                                     : null,
                               ),
                             );
@@ -163,10 +135,8 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
                               ),
                             ),
                             const SizedBox(width: 8),
-                            Text(
-                              _selectedColor.toUpperCase(),
-                              style: Theme.of(context).textTheme.bodySmall,
-                            ),
+                            Text(_selectedColor.toUpperCase(),
+                                style: Theme.of(context).textTheme.bodySmall),
                           ],
                         ),
                       ],
