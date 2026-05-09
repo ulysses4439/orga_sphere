@@ -12,6 +12,7 @@ class LoginScreen extends StatefulWidget {
 
 class _LoginScreenState extends State<LoginScreen> {
   final _formKey = GlobalKey<FormState>();
+  final _nameCtrl = TextEditingController();
   final _emailCtrl = TextEditingController();
   final _passwordCtrl = TextEditingController();
   final _password2Ctrl = TextEditingController();
@@ -23,6 +24,7 @@ class _LoginScreenState extends State<LoginScreen> {
 
   @override
   void dispose() {
+    _nameCtrl.dispose();
     _emailCtrl.dispose();
     _passwordCtrl.dispose();
     _password2Ctrl.dispose();
@@ -34,7 +36,8 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() { _loading = true; _error = null; });
     try {
       if (_isRegister) {
-        await AuthService.register(_emailCtrl.text.trim(), _passwordCtrl.text);
+        await AuthService.register(
+            _emailCtrl.text.trim(), _passwordCtrl.text, _nameCtrl.text.trim());
       } else {
         await AuthService.login(_emailCtrl.text.trim(), _passwordCtrl.text);
       }
@@ -71,6 +74,23 @@ class _LoginScreenState extends State<LoginScreen> {
                   key: _formKey,
                   child: Column(
                     children: [
+                      if (_isRegister) ...[
+                        TextFormField(
+                          controller: _nameCtrl,
+                          decoration: const InputDecoration(
+                            labelText: 'Vor- und Nachname',
+                            border: OutlineInputBorder(),
+                            prefixIcon: Icon(Icons.person_outline),
+                          ),
+                          textCapitalization: TextCapitalization.words,
+                          textInputAction: TextInputAction.next,
+                          validator: (v) {
+                            if (v == null || v.trim().isEmpty) return 'Name erforderlich';
+                            return null;
+                          },
+                        ),
+                        const SizedBox(height: 16),
+                      ],
                       TextFormField(
                         controller: _emailCtrl,
                         decoration: const InputDecoration(
@@ -175,6 +195,7 @@ class _LoginScreenState extends State<LoginScreen> {
                             : () => setState(() {
                                   _isRegister = !_isRegister;
                                   _error = null;
+                                  _nameCtrl.clear();
                                   _formKey.currentState?.reset();
                                 }),
                         child: Text(

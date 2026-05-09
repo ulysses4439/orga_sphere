@@ -232,7 +232,7 @@ async function linkPendingMemberships(p, userId, email) {
 }
 
 app.post('/auth/register', async (req, res) => {
-  const { email, password } = req.body;
+  const { email, password, displayName } = req.body;
   if (!email?.trim() || !password) {
     return res.status(400).json({ error: 'E-Mail und Passwort erforderlich' });
   }
@@ -250,16 +250,18 @@ app.post('/auth/register', async (req, res) => {
 
     const passwordHash = await bcrypt.hash(password, 12);
     const userId = uuidv4();
+    const nameValue = displayName?.trim() || null;
     await p.request()
       .input('id',           sql.NVarChar, userId)
       .input('email',        sql.NVarChar, email.trim().toLowerCase())
       .input('passwordHash', sql.NVarChar, passwordHash)
-      .query('INSERT INTO AppUser (id, email, passwordHash) VALUES (@id, @email, @passwordHash)');
+      .input('displayName',  sql.NVarChar, nameValue)
+      .query('INSERT INTO AppUser (id, email, passwordHash, displayName) VALUES (@id, @email, @passwordHash, @displayName)');
 
     await linkPendingMemberships(p, userId, email.trim().toLowerCase());
 
-    const token = jwt.sign({ userId, email: email.trim().toLowerCase() }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
-    res.json({ token, userId, email: email.trim().toLowerCase() });
+    const token = jwt.sign({ userId, email: email.trim().toLowerCase(), displayName: nameValue }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+    res.json({ token, userId, email: email.trim().toLowerCase(), displayName: nameValue });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -283,8 +285,8 @@ app.post('/auth/login', async (req, res) => {
     if (!valid) {
       return res.status(401).json({ error: 'E-Mail oder Passwort falsch' });
     }
-    const token = jwt.sign({ userId: user.id, email: user.email }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
-    res.json({ token, userId: user.id, email: user.email });
+    const token = jwt.sign({ userId: user.id, email: user.email, displayName: user.displayName || null }, JWT_SECRET, { expiresIn: JWT_EXPIRES_IN });
+    res.json({ token, userId: user.id, email: user.email, displayName: user.displayName || null });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -554,8 +556,11 @@ app.get('/domains/:id/members', requireAuth, requireMember, async (req, res) => 
     const p = await getPool();
     const result = await p.request()
       .input('orbitId', sql.NVarChar, req.params.id)
-      .query(`SELECT id, orbitId, userId, email, role, status, invitedAt, joinedAt
-              FROM OrbitMember WHERE orbitId = @orbitId ORDER BY role DESC, joinedAt ASC`);
+      .query(`SELECT om.id, om.orbitId, om.userId, om.email, om.role, om.status, om.invitedAt, om.joinedAt,
+                     au.displayName
+              FROM OrbitMember om
+              LEFT JOIN AppUser au ON au.id = om.userId
+              WHERE om.orbitId = @orbitId ORDER BY om.role DESC, om.joinedAt ASC`);
     res.json(result.recordset);
   } catch (err) {
     res.status(500).json({ error: err.message });

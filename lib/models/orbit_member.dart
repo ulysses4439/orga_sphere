@@ -3,6 +3,7 @@ class OrbitMember {
   final String orbitId;
   final String? userId;
   final String email;
+  final String? displayName;
   final String role; // 'pilot' | 'copilot'
   final String status; // 'active' | 'suspended' | 'pending'
   final DateTime? invitedAt;
@@ -13,11 +14,14 @@ class OrbitMember {
     required this.orbitId,
     this.userId,
     required this.email,
+    this.displayName,
     required this.role,
     required this.status,
     this.invitedAt,
     this.joinedAt,
   });
+
+  String get displayLabel => displayName?.isNotEmpty == true ? displayName! : email;
 
   factory OrbitMember.fromJson(Map<String, dynamic> json) {
     return OrbitMember(
@@ -25,6 +29,7 @@ class OrbitMember {
       orbitId: json['orbitId'] as String,
       userId: json['userId'] as String?,
       email: json['email'] as String,
+      displayName: json['displayName'] as String?,
       role: json['role'] as String,
       status: json['status'] as String,
       invitedAt: json['invitedAt'] != null

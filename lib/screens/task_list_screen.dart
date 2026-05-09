@@ -257,11 +257,24 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
             const Divider(height: 1),
             ListTile(
               leading: const Icon(Icons.logout, color: Colors.white54),
-              title: Text(
-                AuthService.email ?? 'Abmelden',
-                style: const TextStyle(color: Colors.white70, fontSize: 12),
-                overflow: TextOverflow.ellipsis,
-              ),
+              title: AuthService.displayName != null
+                  ? Text(
+                      AuthService.displayName!,
+                      style: const TextStyle(color: Colors.white70, fontSize: 12),
+                      overflow: TextOverflow.ellipsis,
+                    )
+                  : Text(
+                      AuthService.email ?? 'Abmelden',
+                      style: const TextStyle(color: Colors.white70, fontSize: 12),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+              subtitle: AuthService.displayName != null
+                  ? Text(
+                      AuthService.email ?? '',
+                      style: const TextStyle(color: Colors.white38, fontSize: 11),
+                      overflow: TextOverflow.ellipsis,
+                    )
+                  : null,
               onTap: () async {
                 await AuthService.logout();
                 widget.onLogout?.call();
@@ -1333,7 +1346,11 @@ class _OrbitMembersBarState extends State<_OrbitMembersBar> {
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: members.map((m) {
-                      final initials = m.email.substring(0, 1).toUpperCase();
+                      final initials = (m.displayName?.isNotEmpty == true
+                              ? m.displayName!
+                              : m.email)
+                          .substring(0, 1)
+                          .toUpperCase();
                       Color bg = m.isPilot
                           ? AppColors.teal
                           : m.isSuspended
@@ -1341,11 +1358,14 @@ class _OrbitMembersBarState extends State<_OrbitMembersBar> {
                               : m.isPending
                                   ? Colors.orange.shade700
                                   : Colors.blueGrey.shade600;
+                      final tooltipName = m.displayName?.isNotEmpty == true
+                          ? '${m.displayName}\n${m.email}'
+                          : m.email;
                       return Padding(
                         padding: const EdgeInsets.only(right: 6),
                         child: Tooltip(
-                          message: '${m.email}'
-                              '${m.isPilot ? ' (Pilot)' : ' (Co-Pilot)'}'
+                          message: '$tooltipName'
+                              '${m.isPilot ? '\nPilot' : '\nCo-Pilot'}'
                               '${m.isSuspended ? ' – gesperrt' : ''}'
                               '${m.isPending ? ' – ausstehend' : ''}',
                           child: GestureDetector(
