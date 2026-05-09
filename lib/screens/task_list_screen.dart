@@ -315,9 +315,8 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
           if (mounted) setState(() {});
         },
       ),
-      onTap: () async {
+      onTap: () {
         _reminderService.markShown(task.id);
-        await _taskService.setReminder(task.id, null);
         if (mounted) {
           setState(() {
             _selectedOrbitId = task.domainId;
@@ -751,9 +750,8 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
                   if (mounted) setState(() {});
                 },
               ),
-              onTap: () async {
+              onTap: () {
                 _reminderService.markShown(task.id);
-                await _taskService.setReminder(task.id, null);
                 if (mounted) {
                   final domain = _taskService.getDomainById(task.domainId);
                   _pushSphereList(task.domainId, domain?.name ?? 'Orbit');

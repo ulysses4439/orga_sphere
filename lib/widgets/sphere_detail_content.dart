@@ -536,6 +536,36 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
         task.reminderAt!.isBefore(DateTime.now()) && task.status != TaskStatus.done;
     final reminderColor = reminderExpired ? Colors.red : AppColors.teal;
 
+    if (reminderExpired) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 6),
+        child: Row(
+          children: [
+            Icon(Icons.notifications_active, color: reminderColor, size: 20),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Text(
+                _formatReminderDate(task.reminderAt!),
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                      color: reminderColor,
+                    ),
+              ),
+            ),
+            TextButton.icon(
+              onPressed: _isBusy ? null : _clearReminder,
+              icon: const Icon(Icons.notifications_off_outlined, size: 16),
+              label: const Text('Erinnerung löschen'),
+              style: TextButton.styleFrom(
+                foregroundColor: Colors.red,
+                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                textStyle: const TextStyle(fontSize: 12),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
     return InkWell(
       onTap: _isBusy ? null : _pickReminder,
       borderRadius: BorderRadius.circular(8),
