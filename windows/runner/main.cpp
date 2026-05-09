@@ -27,10 +27,11 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
-  if (!window.Create(L"orga_sphere", origin, size)) {
+  if (!window.Create(L"OrgaSphere", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);
+  ::ShowWindow(window.GetHandle(), SW_SHOWMAXIMIZED);
 
   ::MSG msg;
   while (::GetMessage(&msg, nullptr, 0, 0)) {
