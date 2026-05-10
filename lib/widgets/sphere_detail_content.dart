@@ -12,6 +12,8 @@ class SphereDetailContent extends StatefulWidget {
   final VoidCallback? onDeleted;
   final VoidCallback? onClose;
   final VoidCallback? onChanged;
+  final VoidCallback? onMarkedDone;
+  final VoidCallback? onReopened;
 
   const SphereDetailContent({
     super.key,
@@ -19,6 +21,8 @@ class SphereDetailContent extends StatefulWidget {
     this.onDeleted,
     this.onClose,
     this.onChanged,
+    this.onMarkedDone,
+    this.onReopened,
   });
 
   @override
@@ -237,13 +241,11 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
               try {
                 await _taskService.markAsDone(widget.taskId);
                 if (!mounted) return;
-                setState(() {
-                  _task = _taskService.getTaskById(widget.taskId);
-                  _isBusy = false;
-                });
+                setState(() => _isBusy = false);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Sphere erledigt')),
                 );
+                widget.onMarkedDone?.call();
               } catch (e) {
                 if (!mounted) return;
                 setState(() => _isBusy = false);
@@ -277,13 +279,11 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
               try {
                 await _taskService.reopenTask(widget.taskId);
                 if (!mounted) return;
-                setState(() {
-                  _task = _taskService.getTaskById(widget.taskId);
-                  _isBusy = false;
-                });
+                setState(() => _isBusy = false);
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('Sphere wieder geöffnet')),
                 );
+                widget.onReopened?.call();
               } catch (e) {
                 if (!mounted) return;
                 setState(() => _isBusy = false);

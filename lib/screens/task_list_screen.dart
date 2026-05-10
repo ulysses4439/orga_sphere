@@ -21,10 +21,12 @@ class TaskListScreen extends StatefulWidget {
   State<TaskListScreen> createState() => _TaskListScreenState();
 }
 
-class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObserver {
+class _TaskListScreenState extends State<TaskListScreen>
+    with WidgetsBindingObserver, SingleTickerProviderStateMixin {
   final TaskService _taskService = TaskService();
   final ReminderService _reminderService = ReminderService();
   StreamSubscription<ReminderEvent>? _reminderSub;
+  late final TabController _tabController;
 
   String? _selectedOrbitId;
   String? _selectedSphereId;
@@ -34,6 +36,7 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
   @override
   void initState() {
     super.initState();
+    _tabController = TabController(length: 2, vsync: this);
     WidgetsBinding.instance.addObserver(this);
     _taskService.ready.then((_) {
       if (!mounted) return;
@@ -49,6 +52,7 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
 
   @override
   void dispose() {
+    _tabController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _reminderSub?.cancel();
     _reminderService.stop();
@@ -196,6 +200,13 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
                     onDeleted: () => setState(() => _selectedSphereId = null),
                     onClose: () => setState(() => _selectedSphereId = null),
                     onChanged: () => setState(() {}),
+                    onMarkedDone: () => setState(() {
+                      _tabController.animateTo(0);
+                      _selectedSphereId = null;
+                    }),
+                    onReopened: () => setState(() {
+                      _tabController.animateTo(0);
+                    }),
                   ),
                 ),
               ],
@@ -348,6 +359,7 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
       onSelect: () => setState(() {
         _selectedOrbitId = domain.id;
         _selectedSphereId = null;
+        _tabController.animateTo(0);
       }),
       onDrop: (task) async {
         await _taskService.moveTask(task.id, domain.id);
@@ -527,9 +539,7 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
             dividerColor: Colors.transparent,
           ),
         ),
-        child: DefaultTabController(
-          length: 2,
-          child: Column(
+        child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Padding(
@@ -543,9 +553,10 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
                       ?.copyWith(color: Colors.white),
                 ),
               ),
-              const TabBar(tabs: [Tab(text: 'Im Flug'), Tab(text: 'Gelandet')]),
+              TabBar(controller: _tabController, tabs: const [Tab(text: 'Im Flug'), Tab(text: 'Gelandet')]),
               Expanded(
                 child: TabBarView(
+                  controller: _tabController,
                   children: [
                     Column(
                       children: [
@@ -584,7 +595,6 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
             ],
           ),
         ),
-      ),
     );
   }
 
