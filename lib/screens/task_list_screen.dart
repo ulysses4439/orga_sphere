@@ -168,9 +168,9 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
         toolbarHeight: 64,
         centerTitle: true,
         title: Image.asset('assets/images/logo_full.png', height: 52, fit: BoxFit.contain),
-        bottom: const PreferredSize(
-          preferredSize: Size.fromHeight(1),
-          child: SizedBox(height: 1, child: ColoredBox(color: Colors.black)),
+        bottom: PreferredSize(
+          preferredSize: const Size.fromHeight(1),
+          child: Container(color: Colors.black, height: 1),
         ),
       ),
       body: FutureBuilder<void>(
