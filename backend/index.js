@@ -1060,7 +1060,10 @@ app.get('/logs/:taskId', requireAuth, async (req, res) => {
 
     const result = await p.request()
       .input('taskId', sql.NVarChar, taskId)
-      .query('SELECT * FROM TaskLogEntry WHERE taskId = @taskId ORDER BY timestamp DESC');
+      .query(`SELECT tle.id, tle.taskId, COALESCE(au.displayName, tle.[user]) AS [user], tle.[text], tle.timestamp
+              FROM TaskLogEntry tle
+              LEFT JOIN AppUser au ON au.email = tle.[user]
+              WHERE tle.taskId = @taskId ORDER BY tle.timestamp DESC`);
     res.json(result.recordset);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1096,7 +1099,7 @@ app.post('/logs', requireAuth, async (req, res) => {
       .query("UPDATE Task SET status = 'inProgress' WHERE id = @taskId AND status = 'open'");
     const taskStatus = update.rowsAffected[0] > 0 ? 'inProgress' : null;
 
-    res.json({ ...result.recordset[0], taskStatus });
+    res.json({ ...result.recordset[0], user: req.user.displayName || req.user.email, taskStatus });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

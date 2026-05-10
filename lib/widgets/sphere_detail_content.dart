@@ -342,192 +342,210 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
 
     return Stack(
       children: [
-        SingleChildScrollView(
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Container(
-                padding: const EdgeInsets.all(16),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            // Titel-Header – immer oben fixiert
+            Container(
+              padding: const EdgeInsets.all(16),
+              color: AppColors.navyPale,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Expanded(
+                        child: Text(
+                          task.title,
+                          style: Theme.of(context).textTheme.headlineSmall,
+                        ),
+                      ),
+                      if (widget.onClose != null)
+                        IconButton(
+                          icon: const Icon(Icons.close),
+                          onPressed: widget.onClose,
+                          tooltip: 'Schließen',
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(
+                        'Jahr: ${task.year}',
+                        style: Theme.of(context).textTheme.titleMedium,
+                      ),
+                      Chip(
+                        label: Text(
+                          task.status.germanLabel,
+                          style: const TextStyle(color: Colors.white),
+                        ),
+                        backgroundColor: _statusColor(task.status),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+
+            // Beschreibung + Metadaten + Aktionen – scrollbar, nimmt natürliche Höhe
+            Flexible(
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.all(16),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      _buildDescriptionField(),
+                      const SizedBox(height: 16),
+                      _buildInfoRow('Orbit', domain?.name ?? 'Allgemein'),
+                      const SizedBox(height: 8),
+                      _buildInfoRow('Wiederholung', task.recurrence.germanLabel),
+                      const SizedBox(height: 8),
+                      _buildInfoRow(
+                        'Startdatum',
+                        '${task.startDate.day}. ${_monthName(task.startDate.month)} ${task.startDate.year}',
+                      ),
+                      const SizedBox(height: 8),
+                      _buildInfoRow(
+                        'Fällig am',
+                        dueDate != null
+                            ? '${dueDate.day}. ${_monthName(dueDate.month)} ${dueDate.year}'
+                            : 'Kein Datum',
+                        valueColor: dueDate != null && dueDate.isBefore(DateTime.now()) && !isDone
+                            ? Colors.red
+                            : null,
+                      ),
+                      const SizedBox(height: 8),
+                      _buildReminderRow(task),
+                      if (task.completedAt != null) ...[
+                        const SizedBox(height: 8),
+                        _buildInfoRow(
+                          'Abgeschlossen am',
+                          '${task.completedAt!.day}. ${_monthName(task.completedAt!.month)} ${task.completedAt!.year}',
+                        ),
+                      ],
+                      const SizedBox(height: 24),
+                      if (task.status == TaskStatus.open) ...[
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: _isBusy ? null : _startTask,
+                                icon: const Icon(Icons.timelapse),
+                                label: const Text('In Bearbeitung'),
+                                style: OutlinedButton.styleFrom(
+                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 12),
+                            Expanded(
+                              child: FilledButton.icon(
+                                onPressed: _isBusy ? null : _markAsDone,
+                                icon: const Icon(Icons.check_circle_outline),
+                                label: const Text('Erledigt'),
+                                style: FilledButton.styleFrom(
+                                  backgroundColor: Colors.green,
+                                  padding: const EdgeInsets.symmetric(vertical: 14),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                      if (task.status == TaskStatus.inProgress)
+                        SizedBox(
+                          width: double.infinity,
+                          child: FilledButton.icon(
+                            onPressed: _isBusy ? null : _markAsDone,
+                            icon: const Icon(Icons.check_circle_outline),
+                            label: const Text('Erledigt'),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: Colors.green,
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                            ),
+                          ),
+                        ),
+                      if (isDone)
+                        SizedBox(
+                          width: double.infinity,
+                          child: OutlinedButton.icon(
+                            onPressed: _isBusy ? null : _reopenTask,
+                            icon: const Icon(Icons.undo),
+                            label: const Text('Abschluss rückgängig'),
+                            style: OutlinedButton.styleFrom(
+                              padding: const EdgeInsets.symmetric(vertical: 14),
+                            ),
+                          ),
+                        ),
+                      const SizedBox(height: 16),
+                      SizedBox(
+                        width: double.infinity,
+                        child: OutlinedButton.icon(
+                          onPressed: _isBusy ? null : _deleteTask,
+                          icon: const Icon(Icons.delete_outline, color: Colors.red),
+                          label: const Text(
+                            'Sphere löschen',
+                            style: TextStyle(color: Colors.red),
+                          ),
+                          style: OutlinedButton.styleFrom(
+                            side: const BorderSide(color: Colors.red),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+
+            // Aktivitätsverlauf – eigener scrollbarer Bereich mit navyPale-Hintergrund
+            Expanded(
+              child: Container(
                 color: AppColors.navyPale,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            task.title,
-                            style: Theme.of(context).textTheme.headlineSmall,
-                          ),
-                        ),
-                        if (widget.onClose != null)
-                          IconButton(
-                            icon: const Icon(Icons.close),
-                            onPressed: widget.onClose,
-                            tooltip: 'Schließen',
-                            padding: EdgeInsets.zero,
-                            constraints: const BoxConstraints(),
-                          ),
-                      ],
-                    ),
-                    const SizedBox(height: 8),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Jahr: ${task.year}',
-                          style: Theme.of(context).textTheme.titleMedium,
-                        ),
-                        Chip(
-                          label: Text(
-                            task.status.germanLabel,
-                            style: const TextStyle(color: Colors.white),
-                          ),
-                          backgroundColor: _statusColor(task.status),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _buildDescriptionField(),
-                    const SizedBox(height: 16),
-                    _buildInfoRow('Orbit', domain?.name ?? 'Allgemein'),
-                    const SizedBox(height: 8),
-                    _buildInfoRow('Wiederholung', task.recurrence.germanLabel),
-                    const SizedBox(height: 8),
-                    _buildInfoRow(
-                      'Startdatum',
-                      '${task.startDate.day}. ${_monthName(task.startDate.month)} ${task.startDate.year}',
-                    ),
-                    const SizedBox(height: 8),
-                    _buildInfoRow(
-                      'Fällig am',
-                      dueDate != null
-                          ? '${dueDate.day}. ${_monthName(dueDate.month)} ${dueDate.year}'
-                          : 'Kein Datum',
-                      valueColor: dueDate != null && dueDate.isBefore(DateTime.now()) && !isDone
-                          ? Colors.red
-                          : null,
-                    ),
-                    const SizedBox(height: 8),
-                    _buildReminderRow(task),
-                    if (task.completedAt != null) ...[
-                      const SizedBox(height: 8),
-                      _buildInfoRow(
-                        'Abgeschlossen am',
-                        '${task.completedAt!.day}. ${_monthName(task.completedAt!.month)} ${task.completedAt!.year}',
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
+                      child: Text(
+                        'Aktivitätsverlauf',
+                        style: Theme.of(context).textTheme.titleLarge,
                       ),
-                    ],
-                    const SizedBox(height: 24),
-                    if (task.status == TaskStatus.open) ...[
-                      Row(
-                        children: [
-                          Expanded(
-                            child: OutlinedButton.icon(
-                              onPressed: _isBusy ? null : _startTask,
-                              icon: const Icon(Icons.timelapse),
-                              label: const Text('In Bearbeitung'),
-                              style: OutlinedButton.styleFrom(
-                                padding: const EdgeInsets.symmetric(vertical: 14),
-                              ),
-                            ),
-                          ),
-                          const SizedBox(width: 12),
-                          Expanded(
-                            child: FilledButton.icon(
-                              onPressed: _isBusy ? null : _markAsDone,
-                              icon: const Icon(Icons.check_circle_outline),
-                              label: const Text('Erledigt'),
-                              style: FilledButton.styleFrom(
-                                backgroundColor: Colors.green,
-                                padding: const EdgeInsets.symmetric(vertical: 14),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                    if (task.status == TaskStatus.inProgress)
-                      SizedBox(
-                        width: double.infinity,
-                        child: FilledButton.icon(
-                          onPressed: _isBusy ? null : _markAsDone,
-                          icon: const Icon(Icons.check_circle_outline),
-                          label: const Text('Erledigt'),
-                          style: FilledButton.styleFrom(
-                            backgroundColor: Colors.green,
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                          ),
-                        ),
-                      ),
-                    if (isDone)
-                      SizedBox(
-                        width: double.infinity,
-                        child: OutlinedButton.icon(
-                          onPressed: _isBusy ? null : _reopenTask,
-                          icon: const Icon(Icons.undo),
-                          label: const Text('Abschluss rückgängig'),
-                          style: OutlinedButton.styleFrom(
-                            padding: const EdgeInsets.symmetric(vertical: 14),
-                          ),
-                        ),
-                      ),
-                    const SizedBox(height: 16),
-                    SizedBox(
-                      width: double.infinity,
-                      child: OutlinedButton.icon(
-                        onPressed: _isBusy ? null : _deleteTask,
-                        icon: const Icon(Icons.delete_outline, color: Colors.red),
-                        label: const Text(
-                          'Sphere löschen',
-                          style: TextStyle(color: Colors.red),
-                        ),
-                        style: OutlinedButton.styleFrom(
-                          side: const BorderSide(color: Colors.red),
-                          padding: const EdgeInsets.symmetric(vertical: 12),
-                        ),
+                    ),
+                    Expanded(
+                      child: SingleChildScrollView(
+                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                        child: task.logEntries.isEmpty
+                            ? Padding(
+                                padding: const EdgeInsets.symmetric(vertical: 16),
+                                child: Center(
+                                  child: Text(
+                                    'Noch keine Einträge',
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
+                                        ?.copyWith(color: Colors.grey[600]),
+                                  ),
+                                ),
+                              )
+                            : _buildTimeline(task.logEntries),
                       ),
                     ),
                   ],
                 ),
               ),
-              const Divider(),
-              Padding(
-                padding: const EdgeInsets.all(16),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text('Aktivitätsverlauf', style: Theme.of(context).textTheme.titleLarge),
-                    const SizedBox(height: 16),
-                    if (task.logEntries.isEmpty)
-                      Padding(
-                        padding: const EdgeInsets.symmetric(vertical: 16),
-                        child: Center(
-                          child: Text(
-                            'Noch keine Einträge',
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodyMedium
-                                ?.copyWith(color: Colors.grey[600]),
-                          ),
-                        ),
-                      )
-                    else
-                      _buildTimeline(task.logEntries),
-                    const SizedBox(height: 24),
-                    if (!isDone) _buildAddLogEntryForm(),
-                  ],
-                ),
-              ),
-            ],
-          ),
+            ),
+
+            // Neuer Eintrag – immer unten fixiert (nur wenn Sphere noch nicht erledigt)
+            if (!isDone) _buildAddLogEntryForm(),
+          ],
         ),
         if (_isBusy)
           const Positioned.fill(
@@ -749,7 +767,7 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                 Text('Neuer Eintrag', style: Theme.of(context).textTheme.titleSmall),
                 const Spacer(),
                 Text(
-                  AuthService.email ?? '',
+                  AuthService.displayName ?? AuthService.email ?? '',
                   style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
                 ),
               ],
