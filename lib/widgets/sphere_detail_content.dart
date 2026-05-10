@@ -401,6 +401,8 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                   ),
                 ),
 
+                const Divider(height: 1, thickness: 1, color: Colors.black),
+
                 // Kasten 2: Beschreibung + Metadaten + Aktionen (variable Höhe)
                 Padding(
                   padding: const EdgeInsets.all(16),
@@ -510,10 +512,15 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                   ),
                 ),
 
-                // Kasten 3: Neuer Eintrag (fixe Höhe, Textbox scrollt intern)
-                if (!isDone) _buildAddLogEntryForm(),
+                const Divider(height: 1, thickness: 1, color: Colors.black),
 
-                // Kasten 4: Aktivitätsverlauf (variable Höhe, navyPale)
+                // Kasten 3: Neuer Eintrag (fixe Höhe, Textbox scrollt intern, navyPale)
+                if (!isDone) ...[
+                  _buildAddLogEntryForm(),
+                  const Divider(height: 1, thickness: 1, color: Colors.black),
+                ],
+
+                // Kasten 4: Aktivitätsverlauf (variable Höhe, weißer Hintergrund)
                 _buildActivityLog(task),
               ],
             ),
@@ -533,7 +540,7 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
   Widget _buildActivityLog(Task task) {
     return Container(
       width: double.infinity,
-      color: AppColors.navyPale,
+      color: AppColors.appWhite,
       padding: const EdgeInsets.all(16),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -758,8 +765,8 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     return SizedBox(
       height: 210,
       child: Material(
-        elevation: 1,
-        color: Theme.of(context).cardColor,
+        elevation: 0,
+        color: AppColors.navyPale,
         child: Padding(
           padding: const EdgeInsets.all(16),
           child: Column(
