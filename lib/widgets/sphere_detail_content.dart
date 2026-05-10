@@ -31,6 +31,7 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
   final _logTextController = TextEditingController();
   late final TextEditingController _descriptionController;
   late final FocusNode _descriptionFocusNode;
+  late final ScrollController _outerScrollController;
   String _lastSavedDescription = '';
   bool _isBusy = false;
 
@@ -42,6 +43,7 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     _descriptionController = TextEditingController(text: _lastSavedDescription);
     _descriptionFocusNode = FocusNode()
       ..addListener(_onDescriptionFocusChange);
+    _outerScrollController = ScrollController();
   }
 
   @override
@@ -49,6 +51,7 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     _logTextController.dispose();
     _descriptionController.dispose();
     _descriptionFocusNode.dispose();
+    _outerScrollController.dispose();
     super.dispose();
   }
 
@@ -342,60 +345,64 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
 
     return Stack(
       children: [
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            // Titel-Header – immer oben fixiert
-            Container(
-              padding: const EdgeInsets.all(16),
-              color: AppColors.navyPale,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
+        Scrollbar(
+          controller: _outerScrollController,
+          thumbVisibility: true,
+          child: SingleChildScrollView(
+            controller: _outerScrollController,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                // Kasten 1: Sphere-Titel (variable Höhe, navyPale)
+                Container(
+                  width: double.infinity,
+                  padding: const EdgeInsets.all(16),
+                  color: AppColors.navyPale,
+                  child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Expanded(
-                        child: Text(
-                          task.title,
-                          style: Theme.of(context).textTheme.headlineSmall,
-                        ),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Expanded(
+                            child: Text(
+                              task.title,
+                              style: Theme.of(context).textTheme.headlineSmall,
+                            ),
+                          ),
+                          if (widget.onClose != null)
+                            IconButton(
+                              icon: const Icon(Icons.close),
+                              onPressed: widget.onClose,
+                              tooltip: 'Schließen',
+                              padding: EdgeInsets.zero,
+                              constraints: const BoxConstraints(),
+                            ),
+                        ],
                       ),
-                      if (widget.onClose != null)
-                        IconButton(
-                          icon: const Icon(Icons.close),
-                          onPressed: widget.onClose,
-                          tooltip: 'Schließen',
-                          padding: EdgeInsets.zero,
-                          constraints: const BoxConstraints(),
-                        ),
+                      const SizedBox(height: 8),
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(
+                            'Jahr: ${task.year}',
+                            style: Theme.of(context).textTheme.titleMedium,
+                          ),
+                          Chip(
+                            label: Text(
+                              task.status.germanLabel,
+                              style: const TextStyle(color: Colors.white),
+                            ),
+                            backgroundColor: _statusColor(task.status),
+                          ),
+                        ],
+                      ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      Text(
-                        'Jahr: ${task.year}',
-                        style: Theme.of(context).textTheme.titleMedium,
-                      ),
-                      Chip(
-                        label: Text(
-                          task.status.germanLabel,
-                          style: const TextStyle(color: Colors.white),
-                        ),
-                        backgroundColor: _statusColor(task.status),
-                      ),
-                    ],
-                  ),
-                ],
-              ),
-            ),
+                ),
 
-            // Beschreibung + Metadaten + Aktionen – scrollbar, nimmt natürliche Höhe
-            Flexible(
-              child: SingleChildScrollView(
-                child: Padding(
+                // Kasten 2: Beschreibung + Metadaten + Aktionen (variable Höhe)
+                Padding(
                   padding: const EdgeInsets.all(16),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
@@ -502,50 +509,15 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                     ],
                   ),
                 ),
-              ),
-            ),
 
-            // Aktivitätsverlauf – eigener scrollbarer Bereich mit navyPale-Hintergrund
-            Expanded(
-              child: Container(
-                color: AppColors.navyPale,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-                      child: Text(
-                        'Aktivitätsverlauf',
-                        style: Theme.of(context).textTheme.titleLarge,
-                      ),
-                    ),
-                    Expanded(
-                      child: SingleChildScrollView(
-                        padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
-                        child: task.logEntries.isEmpty
-                            ? Padding(
-                                padding: const EdgeInsets.symmetric(vertical: 16),
-                                child: Center(
-                                  child: Text(
-                                    'Noch keine Einträge',
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodyMedium
-                                        ?.copyWith(color: Colors.grey[600]),
-                                  ),
-                                ),
-                              )
-                            : _buildTimeline(task.logEntries),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
+                // Kasten 3: Neuer Eintrag (fixe Höhe, Textbox scrollt intern)
+                if (!isDone) _buildAddLogEntryForm(),
 
-            // Neuer Eintrag – immer unten fixiert (nur wenn Sphere noch nicht erledigt)
-            if (!isDone) _buildAddLogEntryForm(),
-          ],
+                // Kasten 4: Aktivitätsverlauf (variable Höhe, navyPale)
+                _buildActivityLog(task),
+              ],
+            ),
+          ),
         ),
         if (_isBusy)
           const Positioned.fill(
@@ -555,6 +527,33 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
             ),
           ),
       ],
+    );
+  }
+
+  Widget _buildActivityLog(Task task) {
+    return Container(
+      width: double.infinity,
+      color: AppColors.navyPale,
+      padding: const EdgeInsets.all(16),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Text('Aktivitätsverlauf', style: Theme.of(context).textTheme.titleLarge),
+          const SizedBox(height: 16),
+          if (task.logEntries.isEmpty)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Center(
+                child: Text(
+                  'Noch keine Einträge',
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(color: Colors.grey[600]),
+                ),
+              ),
+            )
+          else
+            _buildTimeline(task.logEntries),
+        ],
+      ),
     );
   }
 
@@ -756,46 +755,54 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
   }
 
   Widget _buildAddLogEntryForm() {
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Row(
-              children: [
-                Text('Neuer Eintrag', style: Theme.of(context).textTheme.titleSmall),
-                const Spacer(),
-                Text(
-                  AuthService.displayName ?? AuthService.email ?? '',
-                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
-                ),
-              ],
-            ),
-            const SizedBox(height: 12),
-            TextField(
-              controller: _logTextController,
-              maxLines: 3,
-              decoration: InputDecoration(
-                labelText: 'Eintrag',
-                hintText: 'Beschreiben Sie den Fortschritt...',
-                border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
-                contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+    return SizedBox(
+      height: 210,
+      child: Material(
+        elevation: 1,
+        color: Theme.of(context).cardColor,
+        child: Padding(
+          padding: const EdgeInsets.all(16),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Text('Neuer Eintrag', style: Theme.of(context).textTheme.titleSmall),
+                  const Spacer(),
+                  Text(
+                    AuthService.displayName ?? AuthService.email ?? '',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
+                  ),
+                ],
               ),
-            ),
-            const SizedBox(height: 12),
-            SizedBox(
-              width: double.infinity,
-              child: ElevatedButton.icon(
-                onPressed: _isBusy ? null : _addLogEntry,
-                icon: const Icon(Icons.add),
-                label: const Text('Eintrag hinzufügen'),
-                style: ElevatedButton.styleFrom(
-                  padding: const EdgeInsets.symmetric(vertical: 12),
+              const SizedBox(height: 8),
+              Expanded(
+                child: TextField(
+                  controller: _logTextController,
+                  expands: true,
+                  maxLines: null,
+                  textAlignVertical: TextAlignVertical.top,
+                  decoration: InputDecoration(
+                    hintText: 'Beschreiben Sie den Fortschritt...',
+                    border: OutlineInputBorder(borderRadius: BorderRadius.circular(8)),
+                    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  ),
                 ),
               ),
-            ),
-          ],
+              const SizedBox(height: 8),
+              SizedBox(
+                width: double.infinity,
+                child: ElevatedButton.icon(
+                  onPressed: _isBusy ? null : _addLogEntry,
+                  icon: const Icon(Icons.add),
+                  label: const Text('Eintrag hinzufügen'),
+                  style: ElevatedButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(vertical: 12),
+                  ),
+                ),
+              ),
+            ],
+          ),
         ),
       ),
     );
