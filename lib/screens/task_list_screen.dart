@@ -168,6 +168,10 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
         toolbarHeight: 64,
         centerTitle: true,
         title: Image.asset('assets/images/logo_full.png', height: 52, fit: BoxFit.contain),
+        bottom: const PreferredSize(
+          preferredSize: Size.fromHeight(1),
+          child: SizedBox(height: 1, child: ColoredBox(color: Colors.black)),
+        ),
       ),
       body: FutureBuilder<void>(
         future: _taskService.ready,
@@ -177,6 +181,7 @@ class _TaskListScreenState extends State<TaskListScreen> with WidgetsBindingObse
           }
           if (snapshot.hasError) return _buildErrorView(snapshot.error);
           return Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               _buildOrbitSidebar(),
               const VerticalDivider(width: 1, thickness: 1),
