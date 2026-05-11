@@ -22,6 +22,95 @@ class _LoginScreenState extends State<LoginScreen> {
   String? _error;
   bool _obscure = true;
 
+  Future<void> _showForgotPassword() async {
+    final emailCtrl = TextEditingController();
+    String? dialogError;
+    bool sent = false;
+    bool loading = false;
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDialogState) => AlertDialog(
+          title: const Text('Passwort vergessen'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'Gib deine E-Mail-Adresse ein. Wir schicken dir einen Link zum Zurücksetzen deines Passworts.',
+                style: TextStyle(fontSize: 13),
+              ),
+              const SizedBox(height: 16),
+              if (!sent) ...[
+                TextField(
+                  controller: emailCtrl,
+                  decoration: const InputDecoration(
+                    labelText: 'E-Mail',
+                    border: OutlineInputBorder(),
+                    prefixIcon: Icon(Icons.email_outlined),
+                  ),
+                  keyboardType: TextInputType.emailAddress,
+                  autocorrect: false,
+                  autofocus: true,
+                ),
+                if (dialogError != null) ...[
+                  const SizedBox(height: 8),
+                  Text(dialogError!, style: const TextStyle(color: Colors.red, fontSize: 13)),
+                ],
+              ] else
+                const Text(
+                  'E-Mail verschickt! Prüfe dein Postfach und klicke auf den Link.',
+                  style: TextStyle(color: Colors.green, fontSize: 13),
+                ),
+            ],
+          ),
+          actions: sent
+              ? [
+                  TextButton(
+                    onPressed: () => Navigator.of(ctx).pop(),
+                    child: const Text('Schließen'),
+                  ),
+                ]
+              : [
+                  TextButton(
+                    onPressed: loading ? null : () => Navigator.of(ctx).pop(),
+                    child: const Text('Abbrechen'),
+                  ),
+                  FilledButton(
+                    onPressed: loading
+                        ? null
+                        : () async {
+                            final mail = emailCtrl.text.trim();
+                            if (!mail.contains('@')) {
+                              setDialogState(() => dialogError = 'Bitte gib eine gültige E-Mail ein.');
+                              return;
+                            }
+                            setDialogState(() { loading = true; dialogError = null; });
+                            try {
+                              await AuthService.forgotPassword(mail);
+                              setDialogState(() { sent = true; loading = false; });
+                            } catch (e) {
+                              setDialogState(() {
+                                loading = false;
+                                dialogError = e.toString().replaceFirst('Exception: ', '');
+                              });
+                            }
+                          },
+                    child: loading
+                        ? const SizedBox(
+                            height: 16, width: 16,
+                            child: CircularProgressIndicator(strokeWidth: 2, color: Colors.white),
+                          )
+                        : const Text('Link senden'),
+                  ),
+                ],
+        ),
+      ),
+    );
+    emailCtrl.dispose();
+  }
+
   @override
   void dispose() {
     _nameCtrl.dispose();
@@ -189,6 +278,14 @@ class _LoginScreenState extends State<LoginScreen> {
                         ),
                       ),
                       const SizedBox(height: 16),
+                      if (!_isRegister)
+                        TextButton(
+                          onPressed: _loading ? null : _showForgotPassword,
+                          child: const Text(
+                            'Passwort vergessen?',
+                            style: TextStyle(color: AppColors.teal),
+                          ),
+                        ),
                       TextButton(
                         onPressed: _loading
                             ? null

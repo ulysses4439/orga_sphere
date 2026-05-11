@@ -114,6 +114,18 @@ class AuthService {
     }
   }
 
+  static Future<void> forgotPassword(String email) async {
+    final response = await http.post(
+      Uri.parse('$baseUrl/auth/forgot-password'),
+      headers: {'Content-Type': 'application/json'},
+      body: jsonEncode({'email': email.trim().toLowerCase()}),
+    );
+    if (response.statusCode != 200) {
+      final b = jsonDecode(response.body) as Map<String, dynamic>;
+      throw Exception(b['error'] ?? 'Anfrage fehlgeschlagen');
+    }
+  }
+
   static Future<void> logout() async {
     _token = null;
     _email = null;

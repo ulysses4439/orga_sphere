@@ -366,6 +366,148 @@ app.patch('/auth/password', requireAuth, async (req, res) => {
 });
 
 // -----------------------------------------------------------------------
+// Passwort zurücksetzen
+// -----------------------------------------------------------------------
+
+app.post('/auth/forgot-password', async (req, res) => {
+  const { email } = req.body;
+  if (!email?.trim()) return res.status(400).json({ error: 'E-Mail erforderlich' });
+  try {
+    const p = await getPool();
+    const result = await p.request()
+      .input('email', sql.NVarChar, email.trim().toLowerCase())
+      .query('SELECT id FROM AppUser WHERE email = @email');
+    if (result.recordset.length > 0) {
+      const resetToken = uuidv4();
+      const expiry = new Date(Date.now() + 60 * 60 * 1000);
+      await p.request()
+        .input('token', sql.NVarChar, resetToken)
+        .input('expiry', sql.DateTime2, expiry)
+        .input('userId', sql.NVarChar, result.recordset[0].id)
+        .query('UPDATE AppUser SET resetToken = @token, resetTokenExpiry = @expiry WHERE id = @userId');
+      const appBase = process.env.APP_BASE_URL || 'http://localhost:3000';
+      await sendMail(
+        email.trim().toLowerCase(),
+        'OrgaSphere – Passwort zurücksetzen',
+        `<div style="font-family:sans-serif;max-width:480px;margin:0 auto">
+          <h2 style="color:#1a1a2e">Passwort zurücksetzen</h2>
+          <p>Du hast angefordert, dein OrgaSphere-Passwort zurückzusetzen.</p>
+          <p style="margin:24px 0">
+            <a href="${appBase}/reset-password?token=${resetToken}"
+               style="background:#1a1a2e;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block">
+              Passwort jetzt zurücksetzen
+            </a>
+          </p>
+          <p style="color:#666;font-size:14px">Der Link ist 1 Stunde gültig. Falls du diese Anfrage nicht gestellt hast, kannst du diese E-Mail ignorieren.</p>
+          <hr style="border:none;border-top:1px solid #eee;margin:24px 0">
+          <p style="color:#999;font-size:12px">OrgaSphere – Orbit-Management</p>
+        </div>`
+      );
+    }
+    // Immer 200 zurückgeben – verhindert, dass man testen kann ob eine E-Mail registriert ist
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/reset-password', async (req, res) => {
+  const { token } = req.query;
+  if (!token) return res.status(400).send('<h2>Ungültiger Reset-Link.</h2>');
+  try {
+    const p = await getPool();
+    const result = await p.request()
+      .input('token', sql.NVarChar, token)
+      .query('SELECT id FROM AppUser WHERE resetToken = @token AND resetTokenExpiry > GETUTCDATE()');
+    if (result.recordset.length === 0) {
+      return res.status(404).send(`<!DOCTYPE html><html lang="de"><head><meta charset="UTF-8">
+        <title>OrgaSphere</title>
+        <style>body{font-family:sans-serif;max-width:480px;margin:60px auto;padding:0 20px;color:#333}</style>
+        </head><body><h1>OrgaSphere</h1>
+        <p style="color:#c62828">Dieser Link ist ungültig oder abgelaufen.<br>Bitte fordere in der App einen neuen Link an.</p>
+        </body></html>`);
+    }
+    res.setHeader('Content-Type', 'text/html; charset=utf-8');
+    res.send(`<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OrgaSphere – Passwort zurücksetzen</title>
+  <style>
+    body { font-family: sans-serif; max-width: 480px; margin: 60px auto; padding: 0 20px; color: #333; }
+    h1 { color: #1a1a2e; }
+    input { width: 100%; padding: 10px; margin: 8px 0 16px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
+    button { background: #1a1a2e; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 16px; cursor: pointer; width: 100%; }
+    button:hover { background: #2d2d4e; }
+    .error { color: #c62828; margin-top: 12px; }
+    .success { color: #2e7d32; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>OrgaSphere</h1>
+  <p>Gib dein neues Passwort ein:</p>
+  <form id="form">
+    <input type="password" id="password" placeholder="Neues Passwort (mind. 8 Zeichen)" required>
+    <input type="password" id="password2" placeholder="Passwort wiederholen" required>
+    <button type="submit">Passwort speichern</button>
+  </form>
+  <div id="msg"></div>
+  <script>
+    document.getElementById('form').addEventListener('submit', async e => {
+      e.preventDefault();
+      const pw = document.getElementById('password').value;
+      const pw2 = document.getElementById('password2').value;
+      const msg = document.getElementById('msg');
+      if (pw !== pw2) { msg.className = 'error'; msg.textContent = 'Passwörter stimmen nicht überein.'; return; }
+      if (pw.length < 8) { msg.className = 'error'; msg.textContent = 'Passwort muss mindestens 8 Zeichen haben.'; return; }
+      const res = await fetch('/reset-password', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: '${token}', password: pw })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        msg.className = 'success';
+        msg.textContent = 'Passwort erfolgreich geändert. Du kannst dich jetzt in der App anmelden.';
+        document.getElementById('form').style.display = 'none';
+      } else {
+        msg.className = 'error';
+        msg.textContent = data.error || 'Fehler beim Zurücksetzen.';
+      }
+    });
+  </script>
+</body>
+</html>`);
+  } catch (err) {
+    res.status(500).send('<h2>Serverfehler. Bitte versuche es später erneut.</h2>');
+  }
+});
+
+app.post('/reset-password', async (req, res) => {
+  const { token, password } = req.body;
+  if (!token || !password) return res.status(400).json({ error: 'Token und Passwort erforderlich' });
+  if (password.length < 8) return res.status(400).json({ error: 'Passwort muss mindestens 8 Zeichen haben' });
+  try {
+    const p = await getPool();
+    const result = await p.request()
+      .input('token', sql.NVarChar, token)
+      .query('SELECT id FROM AppUser WHERE resetToken = @token AND resetTokenExpiry > GETUTCDATE()');
+    if (result.recordset.length === 0) {
+      return res.status(400).json({ error: 'Ungültiger oder abgelaufener Link. Bitte fordere einen neuen an.' });
+    }
+    const newHash = await bcrypt.hash(password, 12);
+    await p.request()
+      .input('hash', sql.NVarChar, newHash)
+      .input('userId', sql.NVarChar, result.recordset[0].id)
+      .query('UPDATE AppUser SET passwordHash = @hash, resetToken = NULL, resetTokenExpiry = NULL WHERE id = @userId');
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// -----------------------------------------------------------------------
 // Einladung (HTML-Seite + Annahme)
 // -----------------------------------------------------------------------
 
