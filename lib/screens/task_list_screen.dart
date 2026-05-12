@@ -1141,6 +1141,17 @@ class _OrbitTileState extends State<_OrbitTile> {
                     widget.isSelected ? FontWeight.bold : FontWeight.normal,
               ),
             ),
+            subtitle: widget.domain.description.isNotEmpty
+                ? Text(
+                    widget.domain.description,
+                    style: const TextStyle(
+                      color: Colors.white70,
+                      fontSize: 11,
+                    ),
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                  )
+                : null,
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
