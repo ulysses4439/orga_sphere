@@ -44,6 +44,16 @@ dev_dependencies:
 
   flutter_lints: ^6.0.0
   flutter_launcher_icons: ^0.14.3
+  msix: ^3.16.8
+
+msix_config:
+  display_name: OrgaSphere
+  publisher_display_name: Coates Event Systems
+  identity_name: CoatesEventSystems.OrgaSphere
+  publisher: CN=77B57D84-A205-4C7E-9F24-AF033E01A389
+  logo_path: assets\images\logo_icon.png
+  capabilities: internetClient
+  store: true
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
