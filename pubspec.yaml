@@ -16,7 +16,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
 # In Windows, build-name is used as the major, minor, and patch parts
 # of the product and file versions while build-number is used as the build suffix.
-version: 1.0.0+1
+version: 1.0.1+1
 
 environment:
   sdk: ^3.11.5
@@ -50,10 +50,12 @@ msix_config:
   display_name: OrgaSphere
   publisher_display_name: Coates Event Systems
   identity_name: CoatesEventSystems.OrgaSphere
-  publisher: CN=77B57D84-A205-4C7E-9F24-AF033E01A389
+  publisher: CN=OrgaSphere Local Test
   logo_path: assets\images\logo_icon.png
   capabilities: internetClient
-  store: true
+  certificate_path: local_test_cert.pfx
+  certificate_password: OrgaTest2026
+  store: false
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
