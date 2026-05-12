@@ -18,7 +18,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
 
   late String? _selectedDomainId = widget.domainId;
   DateTime _startDate = DateTime.now();
-  DateTime _dueDate = DateTime.now().add(const Duration(days: 7));
+  DateTime? _dueDate;
   DateTime? _reminderAt;
   RecurrenceFrequency _frequency = RecurrenceFrequency.none;
   int _interval = 1;
@@ -34,7 +34,9 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
   }
 
   Future<void> _pickDate(bool isStart) async {
-    final initial = isStart ? _startDate : _dueDate;
+    final initial = isStart
+        ? _startDate
+        : (_dueDate ?? DateTime.now().add(const Duration(days: 7)));
     final picked = await showDatePicker(
       context: context,
       initialDate: initial,
@@ -45,7 +47,9 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
     setState(() {
       if (isStart) {
         _startDate = picked;
-        if (_dueDate.isBefore(_startDate)) _dueDate = _startDate;
+        if (_dueDate != null && _dueDate!.isBefore(_startDate)) {
+          _dueDate = _startDate;
+        }
       } else {
         _dueDate = picked;
       }
@@ -140,9 +144,12 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                   ),
                   const SizedBox(height: 16),
                   _DateTile(
-                    label: 'Fälligkeitsdatum *',
+                    label: 'Fälligkeitsdatum',
                     date: _dueDate,
                     onTap: () => _pickDate(false),
+                    onClear: _dueDate != null
+                        ? () => setState(() => _dueDate = null)
+                        : null,
                   ),
                   const SizedBox(height: 16),
                   _ReminderTile(
@@ -197,13 +204,20 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
 
 class _DateTile extends StatelessWidget {
   final String label;
-  final DateTime date;
+  final DateTime? date;
   final VoidCallback onTap;
+  final VoidCallback? onClear;
 
-  const _DateTile({required this.label, required this.date, required this.onTap});
+  const _DateTile({
+    required this.label,
+    required this.date,
+    required this.onTap,
+    this.onClear,
+  });
 
-  String get _formatted =>
-      '${date.day.toString().padLeft(2, '0')}.${date.month.toString().padLeft(2, '0')}.${date.year}';
+  String get _formatted => date == null
+      ? 'Kein Datum'
+      : '${date!.day.toString().padLeft(2, '0')}.${date!.month.toString().padLeft(2, '0')}.${date!.year}';
 
   @override
   Widget build(BuildContext context) {
@@ -215,8 +229,20 @@ class _DateTile extends StatelessWidget {
           labelText: label,
           border: const OutlineInputBorder(),
           prefixIcon: const Icon(Icons.calendar_today),
+          suffixIcon: onClear != null
+              ? IconButton(
+                  icon: const Icon(Icons.close),
+                  onPressed: onClear,
+                  tooltip: 'Datum entfernen',
+                )
+              : null,
         ),
-        child: Text(_formatted),
+        child: Text(
+          _formatted,
+          style: date == null
+              ? TextStyle(color: Theme.of(context).hintColor)
+              : null,
+        ),
       ),
     );
   }

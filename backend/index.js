@@ -83,9 +83,9 @@ async function sendMail(to, subject, html) {
 
 async function sendReminderEmail(toAddresses, task, domainName) {
   const tz = 'Europe/Berlin';
-  const dueStr = new Date(task.dueDate).toLocaleDateString('de-DE', {
+  const dueStr = task.dueDate ? new Date(task.dueDate).toLocaleDateString('de-DE', {
     day: '2-digit', month: 'long', year: 'numeric', timeZone: tz,
-  });
+  }) : null;
   const reminderStr = new Date(task.reminderAt).toLocaleString('de-DE', {
     day: '2-digit', month: 'long', year: 'numeric',
     hour: '2-digit', minute: '2-digit', timeZone: tz,
@@ -96,7 +96,7 @@ async function sendReminderEmail(toAddresses, task, domainName) {
     `
       <h2>Erinnerung für Sphere: ${task.title}</h2>
       <p><strong>Orbit:</strong> ${domainName}</p>
-      <p><strong>Fällig am:</strong> ${dueStr}</p>
+      ${dueStr ? `<p><strong>Fällig am:</strong> ${dueStr}</p>` : ''}
       <p><strong>Erinnerungszeit:</strong> ${reminderStr}</p>
       ${task.description ? `<p><strong>Beschreibung:</strong> ${task.description}</p>` : ''}
       <hr>
@@ -951,7 +951,7 @@ app.get('/tasks', requireAuth, async (req, res) => {
     const request = p.request();
     orbitIds.forEach((id, i) => request.input(`oid${i}`, sql.NVarChar, id));
     const result = await request.query(
-      `SELECT * FROM Task WHERE status != 'done' AND domainId IN (${placeholders}) ORDER BY dueDate ASC`
+      `SELECT * FROM Task WHERE status != 'done' AND domainId IN (${placeholders}) ORDER BY CASE WHEN dueDate IS NULL THEN 1 ELSE 0 END, dueDate ASC`
     );
     res.json(result.recordset);
   } catch (err) {
