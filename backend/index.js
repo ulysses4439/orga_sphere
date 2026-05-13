@@ -1282,7 +1282,7 @@ app.post('/logs', requireAuth, async (req, res) => {
     const result = await p.request()
       .input('id',        sql.NVarChar,  id)
       .input('taskId',    sql.NVarChar,  taskId)
-      .input('user',      sql.NVarChar,  req.user.email)
+      .input('user',      sql.NVarChar,  req.user.displayName || req.user.email)
       .input('text',      sql.NVarChar,  text)
       .input('timestamp', sql.DateTime2, now)
       .query(`INSERT INTO TaskLogEntry (id, taskId, [user], [text], timestamp)
