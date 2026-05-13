@@ -525,8 +525,9 @@ class _TaskListScreenState extends State<TaskListScreen>
       );
     }
 
-    final selectedOrbitName =
-        _taskService.getDomainById(_selectedOrbitId!)?.name ?? 'Orbit';
+    final selectedOrbit = _taskService.getDomainById(_selectedOrbitId!);
+    final selectedOrbitName = selectedOrbit?.name ?? 'Orbit';
+    final selectedOrbitDescription = selectedOrbit?.description ?? '';
 
     return Container(
       color: Colors.black,
@@ -553,6 +554,15 @@ class _TaskListScreenState extends State<TaskListScreen>
                       ?.copyWith(color: Colors.white),
                 ),
               ),
+              if (selectedOrbitDescription.isNotEmpty)
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
+                  child: Text(
+                    selectedOrbitDescription,
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(color: Colors.white70, fontSize: 12),
+                  ),
+                ),
               TabBar(controller: _tabController, tabs: const [Tab(text: 'Im Flug'), Tab(text: 'Gelandet')]),
               Expanded(
                 child: TabBarView(
@@ -1141,17 +1151,6 @@ class _OrbitTileState extends State<_OrbitTile> {
                     widget.isSelected ? FontWeight.bold : FontWeight.normal,
               ),
             ),
-            subtitle: widget.domain.description.isNotEmpty
-                ? Text(
-                    widget.domain.description,
-                    style: const TextStyle(
-                      color: Colors.white70,
-                      fontSize: 11,
-                    ),
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                  )
-                : null,
             trailing: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
