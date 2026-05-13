@@ -238,6 +238,31 @@ class ApiService {
     _checkStatus(response);
   }
 
+  static Future<void> updateTaskSchedule(
+      String taskId, {
+      DateTime? startDate,
+      DateTime? dueDate,
+      bool clearDueDate = false,
+      String? recurrenceFrequency,
+      int? recurrenceInterval,
+  }) async {
+    final body = <String, dynamic>{};
+    if (startDate != null) body['startDate'] = startDate.toUtc().toIso8601String();
+    if (clearDueDate) {
+      body['dueDate'] = null;
+    } else if (dueDate != null) {
+      body['dueDate'] = dueDate.toUtc().toIso8601String();
+    }
+    if (recurrenceFrequency != null) body['recurrenceFrequency'] = recurrenceFrequency;
+    if (recurrenceInterval != null) body['recurrenceInterval'] = recurrenceInterval;
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/tasks/$taskId/schedule'),
+      headers: _headers,
+      body: jsonEncode(body),
+    );
+    _checkStatus(response);
+  }
+
   static Future<void> setReminder(String taskId, DateTime? reminderAt) async {
     final response = await http.patch(
       Uri.parse('$_baseUrl/tasks/$taskId/reminder'),

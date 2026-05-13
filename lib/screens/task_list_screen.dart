@@ -251,8 +251,13 @@ class _TaskListScreenState extends State<TaskListScreen>
               child: Column(
                 children: [
                   Expanded(
-                    child: ListView.builder(
+                    child: ListView.separated(
                       itemCount: domains.length,
+                      separatorBuilder: (_, _) => Divider(
+                        height: 1,
+                        thickness: 1,
+                        color: Colors.grey[800],
+                      ),
                       itemBuilder: (_, i) {
                         final d = domains[i];
                         return _buildOrbitTile(d);
@@ -563,7 +568,10 @@ class _TaskListScreenState extends State<TaskListScreen>
                     style: const TextStyle(color: Colors.white70, fontSize: 12),
                   ),
                 ),
-              TabBar(controller: _tabController, tabs: const [Tab(text: 'Im Flug'), Tab(text: 'Gelandet')]),
+              ColoredBox(
+                color: const Color(0xFF2D2D2D),
+                child: TabBar(controller: _tabController, tabs: const [Tab(text: 'Im Flug'), Tab(text: 'Gelandet')]),
+              ),
               Expanded(
                 child: TabBarView(
                   controller: _tabController,
@@ -841,6 +849,7 @@ class _InlineSphereCreatorState extends State<_InlineSphereCreator> {
   final _ctrl = TextEditingController();
   final _focusNode = FocusNode();
   bool _active = false;
+  DateTime? _startDate;
   DateTime? _dueDate;
   DateTime? _reminderAt;
   RecurrenceFrequency _frequency = RecurrenceFrequency.none;
@@ -856,6 +865,16 @@ class _InlineSphereCreatorState extends State<_InlineSphereCreator> {
 
   void _onChanged(String v) {
     setState(() => _active = v.trim().isNotEmpty);
+  }
+
+  Future<void> _pickStartDate() async {
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _startDate ?? DateTime.now(),
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (picked != null) setState(() => _startDate = picked);
   }
 
   Future<void> _pickDueDate() async {
@@ -902,6 +921,12 @@ class _InlineSphereCreatorState extends State<_InlineSphereCreator> {
     }
   }
 
+  String _startDateLabel() {
+    if (_startDate == null) return 'Startdatum';
+    const months = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+    return '${_startDate!.day}. ${months[_startDate!.month - 1]}';
+  }
+
   String _dueDateLabel() {
     if (_dueDate == null) return 'Fällig';
     const months = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
@@ -911,13 +936,12 @@ class _InlineSphereCreatorState extends State<_InlineSphereCreator> {
   Future<void> _submit() async {
     final title = _ctrl.text.trim();
     if (title.isEmpty || widget.orbitId == null) return;
-    final now = DateTime.now();
     try {
       final task = await _taskService.createTask(
         domainId: widget.orbitId!,
         title: title,
         description: '',
-        startDate: now,
+        startDate: _startDate ?? DateTime.now(),
         dueDate: _dueDate,
         recurrence: RecurrencePattern(frequency: _frequency, interval: 1),
       );
@@ -927,6 +951,7 @@ class _InlineSphereCreatorState extends State<_InlineSphereCreator> {
       _ctrl.clear();
       setState(() {
         _active = false;
+        _startDate = null;
         _dueDate = null;
         _reminderAt = null;
         _frequency = RecurrenceFrequency.none;
@@ -966,6 +991,13 @@ class _InlineSphereCreatorState extends State<_InlineSphereCreator> {
           ),
           if (_active) ...[
             const SizedBox(width: 8),
+            _IconChip(
+              icon: Icons.play_arrow_outlined,
+              label: _startDateLabel(),
+              active: _startDate != null,
+              onTap: _pickStartDate,
+            ),
+            const SizedBox(width: 4),
             _IconChip(
               icon: Icons.calendar_today,
               label: _dueDateLabel(),

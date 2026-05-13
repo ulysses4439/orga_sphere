@@ -1167,6 +1167,47 @@ app.patch('/tasks/:id/domain', requireAuth, async (req, res) => {
   }
 });
 
+app.patch('/tasks/:id/schedule', requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const { startDate, dueDate, recurrenceFrequency, recurrenceInterval } = req.body;
+  try {
+    const p = await getPool();
+    const taskResult = await p.request().input('id', sql.NVarChar, id).query('SELECT domainId FROM Task WHERE id = @id');
+    if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
+    const access = await p.request()
+      .input('orbitId', sql.NVarChar, taskResult.recordset[0].domainId)
+      .input('userId',  sql.NVarChar, req.user.userId)
+      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
+    if (access.recordset.length === 0) return res.status(403).json({ error: 'Kein Zugriff' });
+
+    const setClauses = [];
+    const req2 = p.request().input('id', sql.NVarChar, id);
+    if (startDate !== undefined) {
+      setClauses.push('startDate = @startDate');
+      req2.input('startDate', sql.DateTime2, startDate ? new Date(startDate) : null);
+    }
+    if (dueDate !== undefined) {
+      setClauses.push('dueDate = @dueDate');
+      req2.input('dueDate', sql.DateTime2, dueDate ? new Date(dueDate) : null);
+    }
+    if (recurrenceFrequency !== undefined) {
+      setClauses.push('recurrenceFrequency = @recurrenceFrequency');
+      req2.input('recurrenceFrequency', sql.NVarChar, recurrenceFrequency);
+    }
+    if (recurrenceInterval !== undefined) {
+      setClauses.push('recurrenceInterval = @recurrenceInterval');
+      req2.input('recurrenceInterval', sql.Int, recurrenceInterval);
+    }
+    if (setClauses.length === 0) return res.status(400).json({ error: 'Nothing to update' });
+
+    const result = await req2.query(`UPDATE Task SET ${setClauses.join(', ')} WHERE id = @id`);
+    if (result.rowsAffected[0] === 0) return res.status(404).json({ error: 'Task not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete('/tasks/:id', requireAuth, async (req, res) => {
   const { id } = req.params;
   try {

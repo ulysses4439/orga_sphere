@@ -7,9 +7,9 @@ class Task {
   String domainId;
   final String title;
   String description;
-  final DateTime startDate;
+  DateTime startDate;
   DateTime? dueDate;
-  final RecurrencePattern recurrence;
+  RecurrencePattern recurrence;
   TaskStatus status;
   final DateTime createdAt;
   DateTime? completedAt;

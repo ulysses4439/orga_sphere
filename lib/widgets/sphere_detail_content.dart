@@ -385,7 +385,7 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
-                            'Jahr: ${task.year}',
+                            _periodLabel(task),
                             style: Theme.of(context).textTheme.titleMedium,
                           ),
                           Chip(
@@ -413,14 +413,19 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                       const SizedBox(height: 16),
                       _buildInfoRow('Orbit', domain?.name ?? 'Allgemein'),
                       const SizedBox(height: 8),
-                      _buildInfoRow('Wiederholung', task.recurrence.germanLabel),
-                      const SizedBox(height: 8),
-                      _buildInfoRow(
-                        'Startdatum',
-                        '${task.startDate.day}. ${_monthName(task.startDate.month)} ${task.startDate.year}',
+                      _buildTappableInfoRow(
+                        'Wiederholung',
+                        task.recurrence.germanLabel,
+                        onTap: _isBusy ? null : _pickRecurrence,
                       ),
                       const SizedBox(height: 8),
-                      _buildInfoRow(
+                      _buildTappableInfoRow(
+                        'Startdatum',
+                        '${task.startDate.day}. ${_monthName(task.startDate.month)} ${task.startDate.year}',
+                        onTap: _isBusy ? null : _pickStartDate,
+                      ),
+                      const SizedBox(height: 8),
+                      _buildTappableInfoRow(
                         'Fällig am',
                         dueDate != null
                             ? '${dueDate.day}. ${_monthName(dueDate.month)} ${dueDate.year}'
@@ -428,6 +433,8 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                         valueColor: dueDate != null && dueDate.isBefore(DateTime.now()) && !isDone
                             ? Colors.red
                             : null,
+                        onTap: _isBusy ? null : _pickDueDate,
+                        onClear: dueDate != null && !_isBusy ? _clearDueDate : null,
                       ),
                       const SizedBox(height: 8),
                       _buildReminderRow(task),
@@ -683,6 +690,182 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
           ),
         ),
       ],
+    );
+  }
+
+  String _periodLabel(Task task) {
+    final d = task.startDate;
+    final months = [
+      'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
+      'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember',
+    ];
+    switch (task.recurrence.frequency) {
+      case RecurrenceFrequency.none:
+        return 'Einmalig';
+      case RecurrenceFrequency.daily:
+        return 'Datum: ${d.day.toString().padLeft(2, '0')}.${d.month.toString().padLeft(2, '0')}.${d.year}';
+      case RecurrenceFrequency.weekly:
+        final monday = d.subtract(Duration(days: d.weekday - 1));
+        final sunday = monday.add(const Duration(days: 6));
+        String fmt(DateTime x) =>
+            '${x.day.toString().padLeft(2, '0')}.${x.month.toString().padLeft(2, '0')}.${x.year}';
+        return 'Woche: ${fmt(monday)} – ${fmt(sunday)}';
+      case RecurrenceFrequency.monthly:
+        return 'Monat: ${months[d.month - 1]} ${d.year}';
+      case RecurrenceFrequency.yearly:
+        return 'Jahr: ${d.year}';
+    }
+  }
+
+  Future<void> _pickStartDate() async {
+    final task = _task;
+    if (task == null) return;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: task.startDate,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _isBusy = true);
+    try {
+      await _taskService.updateTaskSchedule(widget.taskId, startDate: picked);
+      if (!mounted) return;
+      setState(() {
+        _task = _taskService.getTaskById(widget.taskId);
+        _isBusy = false;
+      });
+      widget.onChanged?.call();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isBusy = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fehler: $e')));
+    }
+  }
+
+  Future<void> _pickDueDate() async {
+    final task = _task;
+    if (task == null) return;
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: task.dueDate ?? DateTime.now().add(const Duration(days: 7)),
+      firstDate: DateTime(2000),
+      lastDate: DateTime(2100),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _isBusy = true);
+    try {
+      await _taskService.updateTaskSchedule(widget.taskId, dueDate: picked);
+      if (!mounted) return;
+      setState(() {
+        _task = _taskService.getTaskById(widget.taskId);
+        _isBusy = false;
+      });
+      widget.onChanged?.call();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isBusy = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fehler: $e')));
+    }
+  }
+
+  Future<void> _clearDueDate() async {
+    setState(() => _isBusy = true);
+    try {
+      await _taskService.updateTaskSchedule(widget.taskId, clearDueDate: true);
+      if (!mounted) return;
+      setState(() {
+        _task = _taskService.getTaskById(widget.taskId);
+        _isBusy = false;
+      });
+      widget.onChanged?.call();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isBusy = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fehler: $e')));
+    }
+  }
+
+  Future<void> _pickRecurrence() async {
+    final task = _task;
+    if (task == null) return;
+    String frequencyLabel(RecurrenceFrequency f) {
+      switch (f) {
+        case RecurrenceFrequency.none:    return 'Einmalig';
+        case RecurrenceFrequency.daily:   return 'Täglich';
+        case RecurrenceFrequency.weekly:  return 'Wöchentlich';
+        case RecurrenceFrequency.monthly: return 'Monatlich';
+        case RecurrenceFrequency.yearly:  return 'Jährlich';
+      }
+    }
+    final picked = await showDialog<RecurrenceFrequency>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Wiederholung'),
+        children: RecurrenceFrequency.values.map((f) => SimpleDialogOption(
+          onPressed: () => Navigator.pop(ctx, f),
+          child: Text(frequencyLabel(f)),
+        )).toList(),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => _isBusy = true);
+    try {
+      await _taskService.updateTaskSchedule(
+        widget.taskId,
+        recurrenceFrequency: picked.name,
+        recurrenceInterval: picked == RecurrenceFrequency.none ? 1 : task.recurrence.interval,
+      );
+      if (!mounted) return;
+      setState(() {
+        _task = _taskService.getTaskById(widget.taskId);
+        _isBusy = false;
+      });
+      widget.onChanged?.call();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isBusy = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fehler: $e')));
+    }
+  }
+
+  Widget _buildTappableInfoRow(
+    String label,
+    String value, {
+    Color? valueColor,
+    VoidCallback? onTap,
+    VoidCallback? onClear,
+  }) {
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(4),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Row(
+          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+          children: [
+            Text(label,
+                style: Theme.of(context).textTheme.titleSmall?.copyWith(color: Colors.grey[700])),
+            Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(value,
+                    style: Theme.of(context).textTheme.titleSmall?.copyWith(color: valueColor)),
+                if (onClear != null) ...[
+                  const SizedBox(width: 4),
+                  InkWell(
+                    onTap: onClear,
+                    borderRadius: BorderRadius.circular(12),
+                    child: Icon(Icons.close, size: 16, color: Colors.grey[500]),
+                  ),
+                ],
+                const SizedBox(width: 4),
+                Icon(Icons.edit_outlined, size: 14, color: Colors.grey[400]),
+              ],
+            ),
+          ],
+        ),
+      ),
     );
   }
 

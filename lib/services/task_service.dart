@@ -157,6 +157,42 @@ class TaskService {
     if (task != null) task.description = description;
   }
 
+  Future<void> updateTaskSchedule(
+      String taskId, {
+      DateTime? startDate,
+      DateTime? dueDate,
+      bool clearDueDate = false,
+      String? recurrenceFrequency,
+      int? recurrenceInterval,
+  }) async {
+    await ApiService.updateTaskSchedule(
+      taskId,
+      startDate: startDate,
+      dueDate: dueDate,
+      clearDueDate: clearDueDate,
+      recurrenceFrequency: recurrenceFrequency,
+      recurrenceInterval: recurrenceInterval,
+    );
+    final task = getTaskById(taskId);
+    if (task == null) return;
+    if (startDate != null) task.startDate = startDate;
+    if (clearDueDate) {
+      task.dueDate = null;
+    } else if (dueDate != null) {
+      task.dueDate = dueDate;
+    }
+    if (recurrenceFrequency != null || recurrenceInterval != null) {
+      final freq = RecurrenceFrequency.values.firstWhere(
+        (f) => f.name == (recurrenceFrequency ?? task.recurrence.frequency.name),
+        orElse: () => task.recurrence.frequency,
+      );
+      task.recurrence = RecurrencePattern(
+        frequency: freq,
+        interval: recurrenceInterval ?? task.recurrence.interval,
+      );
+    }
+  }
+
   Future<void> setReminder(String taskId, DateTime? reminderAt) async {
     await ApiService.setReminder(taskId, reminderAt);
     final task = getTaskById(taskId);
