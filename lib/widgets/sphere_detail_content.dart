@@ -35,8 +35,11 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
   final _logTextController = TextEditingController();
   late final TextEditingController _descriptionController;
   late final FocusNode _descriptionFocusNode;
+  late final TextEditingController _titleController;
+  late final FocusNode _titleFocusNode;
   late final ScrollController _outerScrollController;
   String _lastSavedDescription = '';
+  String _lastSavedTitle = '';
   bool _isBusy = false;
 
   @override
@@ -44,9 +47,12 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     super.initState();
     _task = _taskService.getTaskById(widget.taskId);
     _lastSavedDescription = _task?.description ?? '';
+    _lastSavedTitle = _task?.title ?? '';
     _descriptionController = TextEditingController(text: _lastSavedDescription);
     _descriptionFocusNode = FocusNode()
       ..addListener(_onDescriptionFocusChange);
+    _titleController = TextEditingController(text: _lastSavedTitle);
+    _titleFocusNode = FocusNode()..addListener(_onTitleFocusChange);
     _outerScrollController = ScrollController();
   }
 
@@ -55,8 +61,31 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     _logTextController.dispose();
     _descriptionController.dispose();
     _descriptionFocusNode.dispose();
+    _titleController.dispose();
+    _titleFocusNode.dispose();
     _outerScrollController.dispose();
     super.dispose();
+  }
+
+  void _onTitleFocusChange() {
+    if (!_titleFocusNode.hasFocus) _saveTitle();
+  }
+
+  Future<void> _saveTitle() async {
+    final newTitle = _titleController.text.trim();
+    if (newTitle.isEmpty || newTitle == _lastSavedTitle) return;
+    _lastSavedTitle = newTitle;
+    try {
+      await _taskService.updateTaskTitle(widget.taskId, newTitle);
+      if (mounted) {
+        setState(() => _task = _taskService.getTaskById(widget.taskId));
+        widget.onChanged?.call();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fehler: $e')));
+      }
+    }
   }
 
   void _onDescriptionFocusChange() {
@@ -365,9 +394,17 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Expanded(
-                            child: Text(
-                              task.title,
+                            child: TextField(
+                              controller: _titleController,
+                              focusNode: _titleFocusNode,
                               style: Theme.of(context).textTheme.headlineSmall,
+                              maxLines: null,
+                              decoration: const InputDecoration(
+                                border: InputBorder.none,
+                                isDense: true,
+                                contentPadding: EdgeInsets.zero,
+                              ),
+                              onSubmitted: (_) => _saveTitle(),
                             ),
                           ),
                           if (widget.onClose != null)

@@ -1086,6 +1086,31 @@ app.patch('/tasks/:id/reopen', requireAuth, async (req, res) => {
   }
 });
 
+app.patch('/tasks/:id/title', requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const { title } = req.body;
+  if (!title || !title.trim()) return res.status(400).json({ error: 'Titel darf nicht leer sein' });
+  try {
+    const p = await getPool();
+    const taskResult = await p.request().input('id', sql.NVarChar, id).query('SELECT domainId FROM Task WHERE id = @id');
+    if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
+    const access = await p.request()
+      .input('orbitId', sql.NVarChar, taskResult.recordset[0].domainId)
+      .input('userId',  sql.NVarChar, req.user.userId)
+      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
+    if (access.recordset.length === 0) return res.status(403).json({ error: 'Kein Zugriff' });
+
+    const result = await p.request()
+      .input('id',    sql.NVarChar, id)
+      .input('title', sql.NVarChar, title.trim())
+      .query('UPDATE Task SET title = @title WHERE id = @id');
+    if (result.rowsAffected[0] === 0) return res.status(404).json({ error: 'Task not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.patch('/tasks/:id/description', requireAuth, async (req, res) => {
   const { id } = req.params;
   const { description } = req.body;

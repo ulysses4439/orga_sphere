@@ -151,6 +151,12 @@ class TaskService {
     }
   }
 
+  Future<void> updateTaskTitle(String taskId, String title) async {
+    await ApiService.updateTaskTitle(taskId, title);
+    final task = getTaskById(taskId);
+    if (task != null) task.title = title;
+  }
+
   Future<void> updateTaskDescription(String taskId, String description) async {
     await ApiService.updateTaskDescription(taskId, description);
     final task = getTaskById(taskId);

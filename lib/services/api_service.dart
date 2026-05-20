@@ -228,6 +228,15 @@ class ApiService {
     _checkStatus(response);
   }
 
+  static Future<void> updateTaskTitle(String taskId, String title) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/tasks/$taskId/title'),
+      headers: _headers,
+      body: jsonEncode({'title': title}),
+    );
+    _checkStatus(response);
+  }
+
   static Future<void> updateTaskDescription(
       String taskId, String description) async {
     final response = await http.patch(
