@@ -27,17 +27,20 @@ class _TaskListScreenState extends State<TaskListScreen>
   final ReminderService _reminderService = ReminderService();
   StreamSubscription<ReminderEvent>? _reminderSub;
   late final TabController _tabController;
+  Timer? _pollTimer;
 
   String? _selectedOrbitId;
   String? _selectedSphereId;
 
   static const double _desktopBreakpoint = 800;
+  static const Duration _pollInterval = Duration(seconds: 30);
 
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     WidgetsBinding.instance.addObserver(this);
+    _taskService.addListener(_onServiceChanged);
     _taskService.ready.then((_) {
       if (!mounted) return;
       // Subscribe BEFORE start() so we don't miss the initial check event.
@@ -47,16 +50,23 @@ class _TaskListScreenState extends State<TaskListScreen>
       final domains = _taskService.getDomains();
       if (domains.isNotEmpty) _selectedOrbitId = domains.first.id;
       setState(() {});
+      _pollTimer = Timer.periodic(_pollInterval, (_) => _taskService.refresh());
     });
   }
 
   @override
   void dispose() {
+    _pollTimer?.cancel();
+    _taskService.removeListener(_onServiceChanged);
     _tabController.dispose();
     WidgetsBinding.instance.removeObserver(this);
     _reminderSub?.cancel();
     _reminderService.stop();
     super.dispose();
+  }
+
+  void _onServiceChanged() {
+    if (mounted) setState(() {});
   }
 
   @override
@@ -65,7 +75,7 @@ class _TaskListScreenState extends State<TaskListScreen>
     // auf Web zusätzlich wenn Tab wieder fokussiert wird.
     if (state == AppLifecycleState.resumed) {
       _reminderService.checkNow();
-      if (mounted) setState(() {});
+      _taskService.refresh();
     }
   }
 

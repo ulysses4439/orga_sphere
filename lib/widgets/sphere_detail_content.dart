@@ -54,10 +54,12 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     _titleController = TextEditingController(text: _lastSavedTitle);
     _titleFocusNode = FocusNode()..addListener(_onTitleFocusChange);
     _outerScrollController = ScrollController();
+    _taskService.addListener(_onServiceChanged);
   }
 
   @override
   void dispose() {
+    _taskService.removeListener(_onServiceChanged);
     _logTextController.dispose();
     _descriptionController.dispose();
     _descriptionFocusNode.dispose();
@@ -65,6 +67,28 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     _titleFocusNode.dispose();
     _outerScrollController.dispose();
     super.dispose();
+  }
+
+  void _onServiceChanged() {
+    if (!mounted) return;
+    final updated = _taskService.getTaskById(widget.taskId);
+    if (updated == null) return;
+    setState(() => _task = updated);
+    // Nur aktualisieren wenn das Feld gerade nicht bearbeitet wird
+    if (!_titleFocusNode.hasFocus) {
+      final newTitle = updated.title;
+      if (newTitle != _lastSavedTitle) {
+        _lastSavedTitle = newTitle;
+        _titleController.text = newTitle;
+      }
+    }
+    if (!_descriptionFocusNode.hasFocus) {
+      final newDesc = updated.description;
+      if (newDesc != _lastSavedDescription) {
+        _lastSavedDescription = newDesc;
+        _descriptionController.text = newDesc;
+      }
+    }
   }
 
   void _onTitleFocusChange() {

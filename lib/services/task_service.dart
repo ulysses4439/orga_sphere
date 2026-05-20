@@ -1,13 +1,15 @@
+import 'package:flutter/foundation.dart';
 import '../models/models.dart';
 import 'api_service.dart';
 
-class TaskService {
+class TaskService extends ChangeNotifier {
   static TaskService? _instance;
 
   final List<TaskDomain> _domains = [];
   final List<Task> _tasks = [];
 
   late final Future<void> _ready;
+  bool _isRefreshing = false;
 
   TaskService._internal() {
     _ready = _loadAll();
@@ -19,6 +21,7 @@ class TaskService {
   }
 
   static void reset() {
+    _instance?.dispose();
     _instance = null;
   }
 
@@ -46,9 +49,14 @@ class TaskService {
   }
 
   Future<void> refresh() async {
-    _domains.clear();
-    _tasks.clear();
-    await _loadAll();
+    if (_isRefreshing) return;
+    _isRefreshing = true;
+    try {
+      await _loadAll();
+      notifyListeners();
+    } finally {
+      _isRefreshing = false;
+    }
   }
 
   List<TaskDomain> getDomains() => List.unmodifiable(_domains);
