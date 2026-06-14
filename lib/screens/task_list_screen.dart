@@ -816,17 +816,44 @@ class _TaskListScreenState extends State<TaskListScreen>
   // ──────────────────────────────────────────────
 
   Widget _buildErrorView(Object? error) {
+    // Bei abgelaufener/ungültiger Sitzung (401) darf der Nutzer nicht in einer
+    // Sackgasse landen: Token verwerfen und zurück zum Login anbieten.
+    final isAuthError = error is UnauthorizedException;
     return Center(
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          const Icon(Icons.cloud_off, size: 64, color: Colors.red),
-          const SizedBox(height: 16),
-          Text('Verbindungsfehler', style: Theme.of(context).textTheme.titleLarge),
-          const SizedBox(height: 8),
-          Text('$error',
-              style: Theme.of(context).textTheme.bodySmall, textAlign: TextAlign.center),
-        ],
+      child: Padding(
+        padding: const EdgeInsets.all(24),
+        child: Column(
+          mainAxisAlignment: MainAxisAlignment.center,
+          children: [
+            Icon(
+              isAuthError ? Icons.lock_outline : Icons.cloud_off,
+              size: 64,
+              color: isAuthError ? AppColors.navy : Colors.red,
+            ),
+            const SizedBox(height: 16),
+            Text(
+              isAuthError ? 'Sitzung abgelaufen' : 'Verbindungsfehler',
+              style: Theme.of(context).textTheme.titleLarge,
+            ),
+            const SizedBox(height: 8),
+            Text(
+              isAuthError ? 'Bitte melde dich erneut an.' : '$error',
+              style: Theme.of(context).textTheme.bodySmall,
+              textAlign: TextAlign.center,
+            ),
+            if (isAuthError) ...[
+              const SizedBox(height: 24),
+              FilledButton.icon(
+                onPressed: () async {
+                  await AuthService.logout();
+                  widget.onLogout?.call();
+                },
+                icon: const Icon(Icons.login),
+                label: const Text('Erneut anmelden'),
+              ),
+            ],
+          ],
+        ),
       ),
     );
   }
