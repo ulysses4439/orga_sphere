@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../theme/app_colors.dart';
+import '../utils/date_format.dart';
 
 class TaskListItem extends StatelessWidget {
   final Task task;
-  final String domainName;
   final Color? domainColor;
   final bool isSelected;
   final VoidCallback onTap;
@@ -12,7 +12,6 @@ class TaskListItem extends StatelessWidget {
   const TaskListItem({
     super.key,
     required this.task,
-    required this.domainName,
     this.domainColor,
     this.isSelected = false,
     required this.onTap,
@@ -75,11 +74,12 @@ class TaskListItem extends StatelessWidget {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             const SizedBox(height: 4),
-            Text('Orbit: $domainName', style: Theme.of(context).textTheme.bodySmall),
+            Text('Start: ${formatDate(task.startDate)}',
+                style: Theme.of(context).textTheme.bodySmall),
             const SizedBox(height: 4),
             if (dueDate != null)
               Text(
-                'Fällig: ${dueDate.day}. ${_monthName(dueDate.month)} ${dueDate.year}',
+                'Fällig: ${formatDate(dueDate)}',
                 style: Theme.of(context).textTheme.bodySmall?.copyWith(
                       color: dueDate.isBefore(now) && task.status != TaskStatus.done
                           ? Colors.red
@@ -91,6 +91,25 @@ class TaskListItem extends StatelessWidget {
               task.recurrence.germanLabel,
               style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[700]),
             ),
+            if (task.assignedToLabel != null) ...[
+              const SizedBox(height: 4),
+              Row(
+                children: [
+                  Icon(Icons.person_outline, size: 13, color: Colors.grey[700]),
+                  const SizedBox(width: 4),
+                  Flexible(
+                    child: Text(
+                      task.assignedToLabel!,
+                      overflow: TextOverflow.ellipsis,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: Colors.grey[700]),
+                    ),
+                  ),
+                ],
+              ),
+            ],
             if (task.reminderAt != null) ...[
               const SizedBox(height: 4),
               Builder(builder: (context) {
@@ -109,7 +128,7 @@ class TaskListItem extends StatelessWidget {
                     ),
                     const SizedBox(width: 4),
                     Text(
-                      _formatReminderDate(task.reminderAt!),
+                      formatDateTime(task.reminderAt!.toLocal()),
                       style: Theme.of(context)
                           .textTheme
                           .bodySmall
@@ -148,24 +167,6 @@ class TaskListItem extends StatelessWidget {
         trailing: const Icon(Icons.chevron_right),
       ),
     );
-  }
-
-  String _formatReminderDate(DateTime date) {
-    final local = date.toLocal();
-    const months = [
-      'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'
-    ];
-    return '${local.day}. ${months[local.month - 1]} '
-        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')} Uhr';
-  }
-
-  String _monthName(int month) {
-    const months = [
-      'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'
-    ];
-    return months[month - 1];
   }
 
   Color _statusBackgroundColor(TaskStatus status) {

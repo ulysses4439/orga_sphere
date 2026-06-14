@@ -15,7 +15,20 @@ class Task {
   DateTime? completedAt;
   DateTime? reminderAt;
   final String? previousTaskId;
+  // Zuweisung an ein OrbitMember (Pilot/Co-Pilot). Name/E-Mail kommen
+  // zur Anzeige aus dem Backend-JOIN und werden nur lesend genutzt.
+  String? assignedToMemberId;
+  String? assignedToName;
+  String? assignedToEmail;
   final List<TaskLogEntry> logEntries;
+
+  String? get assignedToLabel {
+    final name = assignedToName;
+    if (name != null && name.isNotEmpty) return name;
+    final email = assignedToEmail;
+    if (email != null && email.isNotEmpty) return email;
+    return null;
+  }
 
   Task({
     required this.id,
@@ -30,6 +43,9 @@ class Task {
     this.completedAt,
     this.reminderAt,
     this.previousTaskId,
+    this.assignedToMemberId,
+    this.assignedToName,
+    this.assignedToEmail,
     List<TaskLogEntry>? logEntries,
   }) : logEntries = logEntries ?? [];
 
@@ -60,6 +76,9 @@ class Task {
           ? DateTime.parse(json['reminderAt'] as String)
           : null,
       previousTaskId: json['previousTaskId'] as String?,
+      assignedToMemberId: json['assignedToMemberId'] as String?,
+      assignedToName: json['assignedToName'] as String?,
+      assignedToEmail: json['assignedToEmail'] as String?,
     );
   }
 

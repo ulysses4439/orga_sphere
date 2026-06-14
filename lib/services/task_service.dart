@@ -207,6 +207,25 @@ class TaskService extends ChangeNotifier {
     }
   }
 
+  /// Weist die Sphere einem OrbitMember zu (oder hebt die Zuweisung mit
+  /// [memberId] == null auf). [displayName]/[email] dienen der sofortigen
+  /// Anzeige; beim nächsten Refresh kommen sie ohnehin vom Backend-JOIN.
+  Future<void> assignTask(
+    String taskId,
+    String? memberId, {
+    String? displayName,
+    String? email,
+  }) async {
+    await ApiService.assignTask(taskId, memberId);
+    final task = getTaskById(taskId);
+    if (task != null) {
+      task.assignedToMemberId = memberId;
+      task.assignedToName = memberId != null ? displayName : null;
+      task.assignedToEmail = memberId != null ? email : null;
+    }
+    notifyListeners();
+  }
+
   Future<void> setReminder(String taskId, DateTime? reminderAt) async {
     await ApiService.setReminder(taskId, reminderAt);
     final task = getTaskById(taskId);

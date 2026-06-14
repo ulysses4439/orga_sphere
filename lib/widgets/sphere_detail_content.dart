@@ -1,8 +1,10 @@
 import 'package:flutter/material.dart';
 import '../models/models.dart';
+import '../services/api_service.dart';
 import '../services/auth_service.dart';
 import '../services/task_service.dart';
 import '../theme/app_colors.dart';
+import '../utils/date_format.dart';
 import 'reminder_picker_dialog.dart';
 
 /// Reusable sphere detail body – used as embedded panel (desktop) and
@@ -190,6 +192,107 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     setState(() => _isBusy = true);
     try {
       await _taskService.setReminder(widget.taskId, null);
+      if (!mounted) return;
+      setState(() {
+        _task = _taskService.getTaskById(widget.taskId);
+        _isBusy = false;
+      });
+      widget.onChanged?.call();
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isBusy = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fehler: $e')));
+    }
+  }
+
+  Future<void> _pickAssignee(Task task) async {
+    setState(() => _isBusy = true);
+    List<OrbitMember> members;
+    try {
+      members = await ApiService.getOrbitMembers(task.domainId);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isBusy = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fehler: $e')));
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _isBusy = false);
+
+    // Zuweisung nur an aktive (Co-)Piloten dieses Orbits.
+    final active = members.where((m) => m.status == 'active').toList();
+
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => SimpleDialog(
+        title: const Text('Zuweisen an'),
+        children: [
+          SimpleDialogOption(
+            onPressed: () {
+              Navigator.pop(ctx);
+              _assign(task, null);
+            },
+            child: Row(
+              children: [
+                Icon(Icons.person_off_outlined, size: 20, color: Colors.grey[600]),
+                const SizedBox(width: 12),
+                const Text('Niemand'),
+              ],
+            ),
+          ),
+          ...active.map(
+            (m) => SimpleDialogOption(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _assign(task, m);
+              },
+              child: Row(
+                children: [
+                  CircleAvatar(
+                    radius: 14,
+                    backgroundColor: m.isPilot ? AppColors.teal : Colors.blueGrey,
+                    child: Text(
+                      m.displayLabel.substring(0, 1).toUpperCase(),
+                      style: const TextStyle(
+                          color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(m.displayLabel, overflow: TextOverflow.ellipsis),
+                        Text(
+                          m.isPilot ? 'Pilot' : 'Co-Pilot',
+                          style: Theme.of(context)
+                              .textTheme
+                              .bodySmall
+                              ?.copyWith(color: Colors.grey[600]),
+                        ),
+                      ],
+                    ),
+                  ),
+                  if (task.assignedToMemberId == m.id)
+                    const Icon(Icons.check, size: 18, color: AppColors.teal),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _assign(Task task, OrbitMember? member) async {
+    setState(() => _isBusy = true);
+    try {
+      await _taskService.assignTask(
+        task.id,
+        member?.id,
+        displayName: member?.displayName,
+        email: member?.email,
+      );
       if (!mounted) return;
       setState(() {
         _task = _taskService.getTaskById(widget.taskId);
@@ -475,6 +578,16 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                       _buildInfoRow('Orbit', domain?.name ?? 'Allgemein'),
                       const SizedBox(height: 8),
                       _buildTappableInfoRow(
+                        'Zugewiesen an',
+                        task.assignedToLabel ?? 'Niemand',
+                        valueColor: task.assignedToLabel == null ? Colors.grey[500] : null,
+                        onTap: _isBusy ? null : () => _pickAssignee(task),
+                        onClear: task.assignedToMemberId != null && !_isBusy
+                            ? () => _assign(task, null)
+                            : null,
+                      ),
+                      const SizedBox(height: 8),
+                      _buildTappableInfoRow(
                         'Wiederholung',
                         task.recurrence.germanLabel,
                         onTap: _isBusy ? null : _pickRecurrence,
@@ -482,15 +595,13 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                       const SizedBox(height: 8),
                       _buildTappableInfoRow(
                         'Startdatum',
-                        '${task.startDate.day}. ${_monthName(task.startDate.month)} ${task.startDate.year}',
+                        formatDate(task.startDate),
                         onTap: _isBusy ? null : _pickStartDate,
                       ),
                       const SizedBox(height: 8),
                       _buildTappableInfoRow(
                         'Fällig am',
-                        dueDate != null
-                            ? '${dueDate.day}. ${_monthName(dueDate.month)} ${dueDate.year}'
-                            : 'Kein Datum',
+                        dueDate != null ? formatDate(dueDate) : 'Kein Datum',
                         valueColor: dueDate != null && dueDate.isBefore(DateTime.now()) && !isDone
                             ? Colors.red
                             : null,
@@ -503,7 +614,7 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                         const SizedBox(height: 8),
                         _buildInfoRow(
                           'Abgeschlossen am',
-                          '${task.completedAt!.day}. ${_monthName(task.completedAt!.month)} ${task.completedAt!.year}',
+                          formatDate(task.completedAt!),
                         ),
                       ],
                       const SizedBox(height: 24),
@@ -1070,22 +1181,7 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     }
   }
 
-  String _monthName(int month) {
-    const months = [
-      'Januar', 'Februar', 'März', 'April', 'Mai', 'Juni',
-      'Juli', 'August', 'September', 'Oktober', 'November', 'Dezember'
-    ];
-    return months[month - 1];
-  }
+  String _formatDate(DateTime date) => formatDateTime(date);
 
-  String _formatDate(DateTime date) {
-    return '${date.day}. ${_monthName(date.month)} ${date.year}, '
-        '${date.hour.toString().padLeft(2, '0')}:${date.minute.toString().padLeft(2, '0')}';
-  }
-
-  String _formatReminderDate(DateTime date) {
-    final local = date.toLocal();
-    return '${local.day}. ${_monthName(local.month)} ${local.year}, '
-        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')} Uhr';
-  }
+  String _formatReminderDate(DateTime date) => formatDateTime(date.toLocal());
 }

@@ -201,12 +201,13 @@ async function createNextCapsuleIfNeeded(p, task) {
     .input('recurrenceFrequency',  sql.NVarChar,  task.recurrenceFrequency)
     .input('recurrenceInterval',   sql.Int,       task.recurrenceInterval)
     .input('previousTaskId',       sql.NVarChar,  task.id)
+    .input('assignedToMemberId',   sql.NVarChar,  task.assignedToMemberId || null)
     .query(`INSERT INTO Task
               (id, domainId, title, description, startDate, dueDate,
-               recurrenceFrequency, recurrenceInterval, status, previousTaskId)
+               recurrenceFrequency, recurrenceInterval, status, previousTaskId, assignedToMemberId)
             OUTPUT INSERTED.*
             VALUES (@id, @domainId, @title, @description, @startDate, @dueDate,
-                    @recurrenceFrequency, @recurrenceInterval, 'open', @previousTaskId)`);
+                    @recurrenceFrequency, @recurrenceInterval, 'open', @previousTaskId, @assignedToMemberId)`);
 
   return result.recordset[0];
 }
@@ -920,6 +921,10 @@ app.delete('/domains/:id/members/:memberId', requireAuth, requirePilot, async (r
     if (memberCheck.recordset[0]?.role === 'pilot') {
       return res.status(400).json({ error: 'Der Pilot kann nicht entfernt werden' });
     }
+    // Zuweisungen dieses Mitglieds aufheben, sonst zeigen Spheres auf ein gelöschtes Mitglied
+    await p.request()
+      .input('memberId', sql.NVarChar, memberId)
+      .query('UPDATE Task SET assignedToMemberId = NULL WHERE assignedToMemberId = @memberId');
     await p.request()
       .input('id', sql.NVarChar, memberId)
       .query('DELETE FROM OrbitMember WHERE id = @id');
@@ -951,7 +956,12 @@ app.get('/tasks', requireAuth, async (req, res) => {
     const request = p.request();
     orbitIds.forEach((id, i) => request.input(`oid${i}`, sql.NVarChar, id));
     const result = await request.query(
-      `SELECT * FROM Task WHERE status != 'done' AND domainId IN (${placeholders}) ORDER BY CASE WHEN dueDate IS NULL THEN 1 ELSE 0 END, dueDate ASC`
+      `SELECT t.*, om.email AS assignedToEmail, au.displayName AS assignedToName
+       FROM Task t
+       LEFT JOIN OrbitMember om ON om.id = t.assignedToMemberId
+       LEFT JOIN AppUser au ON au.id = om.userId
+       WHERE t.status != 'done' AND t.domainId IN (${placeholders})
+       ORDER BY CASE WHEN t.dueDate IS NULL THEN 1 ELSE 0 END, t.dueDate ASC`
     );
     res.json(result.recordset);
   } catch (err) {
@@ -969,7 +979,12 @@ app.get('/tasks/archived', requireAuth, async (req, res) => {
     const request = p.request();
     orbitIds.forEach((id, i) => request.input(`oid${i}`, sql.NVarChar, id));
     const result = await request.query(
-      `SELECT * FROM Task WHERE status = 'done' AND domainId IN (${placeholders}) ORDER BY completedAt DESC`
+      `SELECT t.*, om.email AS assignedToEmail, au.displayName AS assignedToName
+       FROM Task t
+       LEFT JOIN OrbitMember om ON om.id = t.assignedToMemberId
+       LEFT JOIN AppUser au ON au.id = om.userId
+       WHERE t.status = 'done' AND t.domainId IN (${placeholders})
+       ORDER BY t.completedAt DESC`
     );
     res.json(result.recordset);
   } catch (err) {
@@ -1192,6 +1207,48 @@ app.patch('/tasks/:id/domain', requireAuth, async (req, res) => {
   }
 });
 
+// Sphere einer Person zuweisen (oder Zuweisung aufheben mit memberId = null).
+// Die Person muss aktives Mitglied (Pilot/Co-Pilot) DESSELBEN Orbits sein.
+app.patch('/tasks/:id/assignee', requireAuth, async (req, res) => {
+  const { id } = req.params;
+  const { memberId } = req.body;
+  try {
+    const p = await getPool();
+
+    const taskResult = await p.request()
+      .input('id', sql.NVarChar, id)
+      .query('SELECT domainId FROM Task WHERE id = @id');
+    if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
+    const orbitId = taskResult.recordset[0].domainId;
+
+    // Aufrufer muss aktives Mitglied des Orbits sein
+    const access = await p.request()
+      .input('orbitId', sql.NVarChar, orbitId)
+      .input('userId',  sql.NVarChar, req.user.userId)
+      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
+    if (access.recordset.length === 0) return res.status(403).json({ error: 'Kein Zugriff' });
+
+    // Wenn zugewiesen: Zielperson muss aktives Mitglied genau dieses Orbits sein
+    if (memberId) {
+      const member = await p.request()
+        .input('memberId', sql.NVarChar, memberId)
+        .input('orbitId',  sql.NVarChar, orbitId)
+        .query(`SELECT id FROM OrbitMember WHERE id = @memberId AND orbitId = @orbitId AND status = 'active'`);
+      if (member.recordset.length === 0) {
+        return res.status(400).json({ error: 'Person ist kein aktives Mitglied dieses Orbits' });
+      }
+    }
+
+    await p.request()
+      .input('id',       sql.NVarChar, id)
+      .input('memberId', sql.NVarChar, memberId || null)
+      .query('UPDATE Task SET assignedToMemberId = @memberId WHERE id = @id');
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.patch('/tasks/:id/schedule', requireAuth, async (req, res) => {
   const { id } = req.params;
   const { startDate, dueDate, recurrenceFrequency, recurrenceInterval } = req.body;
@@ -1304,10 +1361,19 @@ app.post('/logs', requireAuth, async (req, res) => {
       .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
     if (access.recordset.length === 0) return res.status(403).json({ error: 'Kein Zugriff' });
 
+    // Klarname immer frisch aus AppUser holen – der displayName im JWT kann
+    // veraltet sein (z. B. erst nach dem Login gesetzt). E-Mail nur als
+    // Fallback, wenn für das Konto wirklich kein Name hinterlegt ist.
+    const userRow = await p.request()
+      .input('userId', sql.NVarChar, req.user.userId)
+      .query('SELECT displayName, email FROM AppUser WHERE id = @userId');
+    const u = userRow.recordset[0] || {};
+    const userLabel = (u.displayName && u.displayName.trim()) || u.email || req.user.email;
+
     const result = await p.request()
       .input('id',        sql.NVarChar,  id)
       .input('taskId',    sql.NVarChar,  taskId)
-      .input('user',      sql.NVarChar,  req.user.displayName || req.user.email)
+      .input('user',      sql.NVarChar,  userLabel)
       .input('text',      sql.NVarChar,  text)
       .input('timestamp', sql.DateTime2, now)
       .query(`INSERT INTO TaskLogEntry (id, taskId, [user], [text], timestamp)
@@ -1319,7 +1385,7 @@ app.post('/logs', requireAuth, async (req, res) => {
       .query("UPDATE Task SET status = 'inProgress' WHERE id = @taskId AND status = 'open'");
     const taskStatus = update.rowsAffected[0] > 0 ? 'inProgress' : null;
 
-    res.json({ ...result.recordset[0], user: req.user.displayName || req.user.email, taskStatus });
+    res.json({ ...result.recordset[0], user: userLabel, taskStatus });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

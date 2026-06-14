@@ -8,6 +8,7 @@ import '../services/task_service.dart';
 import '../services/reminder_service.dart';
 import '../services/sound_service.dart';
 import '../theme/app_colors.dart';
+import '../utils/date_format.dart';
 import '../widgets/task_list_item.dart';
 import '../widgets/sphere_detail_content.dart';
 import '../widgets/reminder_picker_dialog.dart';
@@ -158,14 +159,7 @@ class _TaskListScreenState extends State<TaskListScreen>
     );
   }
 
-  String _formatDateTime(DateTime d) =>
-      '${d.day}. ${_monthName(d.month)} ${d.year}, '
-      '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')} Uhr';
-
-  String _monthName(int m) => [
-        'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
-        'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez'
-      ][m - 1];
+  String _formatDateTime(DateTime d) => formatDateTime(d);
 
   // ──────────────────────────────────────────────
   // DESKTOP
@@ -653,7 +647,6 @@ class _TaskListScreenState extends State<TaskListScreen>
         final domain = _taskService.getDomainById(task.domainId);
         final card = TaskListItem(
           task: task,
-          domainName: domain?.name ?? 'Allgemein',
           domainColor: domain?.color,
           isSelected: task.id == _selectedSphereId,
           onTap: () => setState(() => _selectedSphereId = task.id),
@@ -691,6 +684,7 @@ class _TaskListScreenState extends State<TaskListScreen>
 
   Widget _buildMobileLayout() {
     return Scaffold(
+      backgroundColor: Colors.black,
       appBar: AppBar(
         toolbarHeight: 64,
         centerTitle: true,
@@ -729,12 +723,14 @@ class _TaskListScreenState extends State<TaskListScreen>
           child: Text(
             'Orbits',
             style: Theme.of(context).textTheme.labelLarge?.copyWith(
-                  color: AppColors.navy,
+                  color: Colors.white,
                   fontWeight: FontWeight.w700,
                   letterSpacing: 1.4,
                 ),
           ),
         ),
+        // Nur der Orbit-Titel – die Beschreibung erscheint erst in der
+        // Detailansicht (analog zur Desktop-Version).
         ...domains.map(
           (d) => ListTile(
             leading: Container(
@@ -742,9 +738,8 @@ class _TaskListScreenState extends State<TaskListScreen>
               height: 16,
               decoration: BoxDecoration(color: d.color, shape: BoxShape.circle),
             ),
-            title: Text(d.name),
-            subtitle: d.description.isNotEmpty ? Text(d.description) : null,
-            trailing: const Icon(Icons.chevron_right),
+            title: Text(d.name, style: const TextStyle(color: Colors.white)),
+            trailing: const Icon(Icons.chevron_right, color: Colors.white70),
             onTap: () => _pushSphereList(d.id, d.name),
           ),
         ),
@@ -931,17 +926,11 @@ class _InlineSphereCreatorState extends State<_InlineSphereCreator> {
     }
   }
 
-  String _startDateLabel() {
-    if (_startDate == null) return 'Startdatum';
-    const months = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
-    return '${_startDate!.day}. ${months[_startDate!.month - 1]}';
-  }
+  String _startDateLabel() =>
+      _startDate == null ? 'Startdatum' : formatDate(_startDate!);
 
-  String _dueDateLabel() {
-    if (_dueDate == null) return 'Fällig';
-    const months = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
-    return '${_dueDate!.day}. ${months[_dueDate!.month - 1]}';
-  }
+  String _dueDateLabel() =>
+      _dueDate == null ? 'Fällig' : formatDate(_dueDate!);
 
   Future<void> _submit() async {
     final title = _ctrl.text.trim();

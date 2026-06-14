@@ -228,6 +228,15 @@ class ApiService {
     _checkStatus(response);
   }
 
+  static Future<void> assignTask(String taskId, String? memberId) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/tasks/$taskId/assignee'),
+      headers: _headers,
+      body: jsonEncode({'memberId': memberId}),
+    );
+    _checkStatus(response);
+  }
+
   static Future<void> updateTaskTitle(String taskId, String title) async {
     final response = await http.patch(
       Uri.parse('$_baseUrl/tasks/$taskId/title'),

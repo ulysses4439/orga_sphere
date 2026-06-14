@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/task_service.dart';
+import '../utils/date_format.dart';
 import '../widgets/reminder_picker_dialog.dart';
 
 class CreateTaskScreen extends StatefulWidget {
@@ -215,9 +216,7 @@ class _DateTile extends StatelessWidget {
     this.onClear,
   });
 
-  String get _formatted => date == null
-      ? 'Kein Datum'
-      : '${date!.day.toString().padLeft(2, '0')}.${date!.month.toString().padLeft(2, '0')}.${date!.year}';
+  String get _formatted => date == null ? 'Kein Datum' : formatDate(date!);
 
   @override
   Widget build(BuildContext context) {
@@ -259,15 +258,7 @@ class _ReminderTile extends StatelessWidget {
     required this.onClear,
   });
 
-  String _formatted(DateTime dt) {
-    final local = dt.toLocal();
-    const months = [
-      'Jan', 'Feb', 'Mär', 'Apr', 'Mai', 'Jun',
-      'Jul', 'Aug', 'Sep', 'Okt', 'Nov', 'Dez',
-    ];
-    return '${local.day}. ${months[local.month - 1]} ${local.year}, '
-        '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')} Uhr';
-  }
+  String _formatted(DateTime dt) => formatDateTime(dt.toLocal());
 
   @override
   Widget build(BuildContext context) {
