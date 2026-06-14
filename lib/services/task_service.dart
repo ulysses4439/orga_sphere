@@ -124,6 +124,7 @@ class TaskService extends ChangeNotifier {
     final task = getTaskById(taskId);
     if (task != null) task.markAsDone();
     if (nextTask != null) _tasks.add(nextTask);
+    notifyListeners();
   }
 
   Future<void> reopenTask(String taskId) async {
@@ -144,6 +145,7 @@ class TaskService extends ChangeNotifier {
     await ApiService.startTask(taskId);
     final task = getTaskById(taskId);
     if (task != null) task.status = TaskStatus.inProgress;
+    notifyListeners();
   }
 
   Future<void> addLogEntry(String taskId, String text) async {
