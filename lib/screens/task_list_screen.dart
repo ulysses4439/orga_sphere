@@ -12,7 +12,8 @@ import '../utils/date_format.dart';
 import '../widgets/task_list_item.dart';
 import '../widgets/sphere_detail_content.dart';
 import '../widgets/reminder_picker_dialog.dart';
-import 'settings_screen.dart';
+import '../widgets/orbit_members_bar.dart';
+import '../widgets/user_account_menu.dart';
 
 class TaskListScreen extends StatefulWidget {
   final VoidCallback? onLogout;
@@ -398,49 +399,8 @@ class _TaskListScreenState extends State<TaskListScreen>
   }
 
   Future<void> _showInviteCoPilotDialog(TaskDomain domain) async {
-    final ctrl = TextEditingController();
-    final result = await showDialog<String>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text('Co-Pilot einladen – ${domain.name}'),
-        content: TextField(
-          controller: ctrl,
-          autofocus: true,
-          keyboardType: TextInputType.emailAddress,
-          autocorrect: false,
-          decoration: const InputDecoration(
-            labelText: 'E-Mail-Adresse',
-            border: OutlineInputBorder(),
-            prefixIcon: Icon(Icons.person_add_outlined),
-          ),
-          onSubmitted: (v) => Navigator.pop(ctx, v.trim()),
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Abbrechen')),
-          FilledButton(
-            onPressed: () => Navigator.pop(ctx, ctrl.text.trim()),
-            child: const Text('Einladen'),
-          ),
-        ],
-      ),
-    );
-    ctrl.dispose();
-    if (result == null || result.isEmpty || !mounted) return;
-    try {
-      final status = await ApiService.inviteCoPilot(domain.id, result);
-      if (mounted) {
-        final msg = status == 'invited'
-            ? 'Einladung an $result gesendet'
-            : '$result wurde als Co-Pilot hinzugefügt';
-        ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
-        setState(() {});
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Fehler: $e')));
-      }
-    }
+    await showInviteCoPilotDialog(context, domain);
+    if (mounted) setState(() {});
   }
 
   Future<void> _showDeleteOrbitDialog(TaskDomain domain) async {
@@ -590,7 +550,7 @@ class _TaskListScreenState extends State<TaskListScreen>
                         ),
                         const Divider(height: 1),
                         if (_selectedOrbitId != null)
-                          _OrbitMembersBar(
+                          OrbitMembersBar(
                             key: ValueKey('members_$_selectedOrbitId'),
                             orbitId: _selectedOrbitId!,
                             onInvite: () => _showInviteCoPilotDialog(
@@ -689,6 +649,27 @@ class _TaskListScreenState extends State<TaskListScreen>
         toolbarHeight: 64,
         centerTitle: true,
         title: Image.asset('assets/images/logo_full.png', height: 52, fit: BoxFit.contain),
+        actions: [
+          UserAccountMenu(
+            onLogout: widget.onLogout,
+            offset: const Offset(0, 48),
+            child: Padding(
+              padding: const EdgeInsets.only(right: 12),
+              child: CircleAvatar(
+                radius: 16,
+                backgroundColor: AppColors.teal,
+                child: Text(
+                  userInitials(),
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 12,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
       body: FutureBuilder<void>(
         future: _taskService.ready,
@@ -717,6 +698,15 @@ class _TaskListScreenState extends State<TaskListScreen>
 
     return ListView(
       children: [
+        // Version direkt unter dem Logo – nur auf der Startseite sichtbar.
+        Padding(
+          padding: const EdgeInsets.only(top: 6, bottom: 2),
+          child: Text(
+            'Version $kAppVersion',
+            textAlign: TextAlign.center,
+            style: const TextStyle(color: Colors.white38, fontSize: 11),
+          ),
+        ),
         if (missed.isNotEmpty) _buildMobileMissedBanner(missed),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
@@ -1287,187 +1277,6 @@ class _OrbitTileState extends State<_OrbitTile> {
   }
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Teilnehmerliste eines Orbits (Pilot + Co-Piloten)
-// ─────────────────────────────────────────────────────────────────────────────
-
-class _OrbitMembersBar extends StatefulWidget {
-  final String orbitId;
-  final VoidCallback onInvite;
-
-  const _OrbitMembersBar({
-    super.key,
-    required this.orbitId,
-    required this.onInvite,
-  });
-
-  @override
-  State<_OrbitMembersBar> createState() => _OrbitMembersBarState();
-}
-
-class _OrbitMembersBarState extends State<_OrbitMembersBar> {
-  late Future<List<OrbitMember>> _future;
-
-  @override
-  void initState() {
-    super.initState();
-    _future = ApiService.getOrbitMembers(widget.orbitId);
-  }
-
-  void _reload() {
-    setState(() {
-      _future = ApiService.getOrbitMembers(widget.orbitId);
-    });
-  }
-
-  bool _isPilot(List<OrbitMember> members) => members.any(
-      (m) => m.email == AuthService.email && m.isPilot);
-
-  Future<void> _manageMember(OrbitMember member) async {
-    final action = await showDialog<String>(
-      context: context,
-      builder: (ctx) => SimpleDialog(
-        title: Text(member.email),
-        children: [
-          if (!member.isSuspended)
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(ctx, 'suspend'),
-              child: const Row(children: [
-                Icon(Icons.block, color: Colors.orange, size: 18),
-                SizedBox(width: 8),
-                Text('Sperren'),
-              ]),
-            ),
-          if (member.isSuspended)
-            SimpleDialogOption(
-              onPressed: () => Navigator.pop(ctx, 'reactivate'),
-              child: const Row(children: [
-                Icon(Icons.check_circle_outline, color: Colors.green, size: 18),
-                SizedBox(width: 8),
-                Text('Wieder aktivieren'),
-              ]),
-            ),
-          SimpleDialogOption(
-            onPressed: () => Navigator.pop(ctx, 'remove'),
-            child: const Row(children: [
-              Icon(Icons.person_remove_outlined, color: Colors.red, size: 18),
-              SizedBox(width: 8),
-              Text('Entfernen', style: TextStyle(color: Colors.red)),
-            ]),
-          ),
-        ],
-      ),
-    );
-    if (action == null || !mounted) return;
-    try {
-      if (action == 'suspend') {
-        await ApiService.suspendCoPilot(widget.orbitId, member.id);
-      } else if (action == 'reactivate') {
-        await ApiService.reactivateCoPilot(widget.orbitId, member.id);
-      } else if (action == 'remove') {
-        await ApiService.removeCoPilot(widget.orbitId, member.id);
-      }
-      _reload();
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(SnackBar(content: Text('Fehler: $e')));
-      }
-    }
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return FutureBuilder<List<OrbitMember>>(
-      future: _future,
-      builder: (context, snapshot) {
-        if (snapshot.connectionState != ConnectionState.done) {
-          return const SizedBox(
-            height: 36,
-            child: Center(child: SizedBox(width: 16, height: 16,
-                child: CircularProgressIndicator(strokeWidth: 2))),
-          );
-        }
-        final members = snapshot.data ?? [];
-        final isPilot = _isPilot(members);
-
-        return Container(
-          color: Colors.black,
-          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-          child: Row(
-            children: [
-              const Icon(Icons.group_outlined, size: 16, color: Colors.white54),
-              const SizedBox(width: 8),
-              Expanded(
-                child: SingleChildScrollView(
-                  scrollDirection: Axis.horizontal,
-                  child: Row(
-                    children: members.map((m) {
-                      final initials = (m.displayName?.isNotEmpty == true
-                              ? m.displayName!
-                              : m.email)
-                          .substring(0, 1)
-                          .toUpperCase();
-                      Color bg = m.isPilot
-                          ? AppColors.teal
-                          : m.isSuspended
-                              ? Colors.red.shade800
-                              : m.isPending
-                                  ? Colors.orange.shade700
-                                  : Colors.blueGrey.shade600;
-                      final tooltipName = m.displayName?.isNotEmpty == true
-                          ? '${m.displayName}\n${m.email}'
-                          : m.email;
-                      return Padding(
-                        padding: const EdgeInsets.only(right: 6),
-                        child: Tooltip(
-                          message: '$tooltipName'
-                              '${m.isPilot ? '\nPilot' : '\nCo-Pilot'}'
-                              '${m.isSuspended ? ' – gesperrt' : ''}'
-                              '${m.isPending ? ' – ausstehend' : ''}',
-                          child: GestureDetector(
-                            onTap: isPilot && !m.isPilot
-                                ? () => _manageMember(m)
-                                : null,
-                            child: CircleAvatar(
-                              radius: 13,
-                              backgroundColor: bg,
-                              child: Text(
-                                initials,
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold),
-                              ),
-                            ),
-                          ),
-                        ),
-                      );
-                    }).toList(),
-                  ),
-                ),
-              ),
-              if (isPilot)
-                IconButton(
-                  icon: const Icon(Icons.person_add_outlined,
-                      color: Colors.white54, size: 18),
-                  tooltip: 'Co-Pilot einladen',
-                  padding: EdgeInsets.zero,
-                  constraints: const BoxConstraints(),
-                  onPressed: () async {
-                    widget.onInvite();
-                    await Future.delayed(const Duration(milliseconds: 800));
-                    _reload();
-                  },
-                ),
-            ],
-          ),
-        );
-      },
-    );
-  }
-}
-
 // ---------------------------------------------------------------------------
 // User-Header in der Sidebar
 // ---------------------------------------------------------------------------
@@ -1476,73 +1285,10 @@ class _UserHeader extends StatelessWidget {
   final VoidCallback? onLogout;
   const _UserHeader({this.onLogout});
 
-  String _initials() {
-    final name = AuthService.displayName;
-    if (name != null && name.isNotEmpty) {
-      final parts = name.trim().split(' ');
-      if (parts.length >= 2) {
-        return '${parts.first[0]}${parts.last[0]}'.toUpperCase();
-      }
-      return name[0].toUpperCase();
-    }
-    return (AuthService.email ?? '?')[0].toUpperCase();
-  }
-
   @override
   Widget build(BuildContext context) {
-    return PopupMenuButton<String>(
-      offset: const Offset(8, 0),
-      color: const Color(0xFF1C1C2E),
-      onSelected: (value) async {
-        if (value == 'settings') {
-          await Navigator.of(context).push(
-            MaterialPageRoute(
-              builder: (_) => SettingsScreen(onLogout: onLogout ?? () {}),
-            ),
-          );
-        } else if (value == 'logout') {
-          final confirmed = await showDialog<bool>(
-            context: context,
-            builder: (ctx) => AlertDialog(
-              title: const Text('Abmelden'),
-              content: const Text('Möchtest du dich wirklich abmelden?'),
-              actions: [
-                TextButton(
-                  onPressed: () => Navigator.pop(ctx, false),
-                  child: const Text('Abbrechen'),
-                ),
-                FilledButton(
-                  onPressed: () => Navigator.pop(ctx, true),
-                  style: FilledButton.styleFrom(backgroundColor: Colors.red),
-                  child: const Text('Abmelden'),
-                ),
-              ],
-            ),
-          );
-          if (confirmed == true) {
-            await AuthService.logout();
-            onLogout?.call();
-          }
-        }
-      },
-      itemBuilder: (_) => [
-        const PopupMenuItem(
-          value: 'settings',
-          child: Row(children: [
-            Icon(Icons.settings_outlined, color: Colors.white70, size: 20),
-            SizedBox(width: 12),
-            Text('Einstellungen', style: TextStyle(color: Colors.white)),
-          ]),
-        ),
-        const PopupMenuItem(
-          value: 'logout',
-          child: Row(children: [
-            Icon(Icons.logout, color: Colors.white70, size: 20),
-            SizedBox(width: 12),
-            Text('Ausloggen', style: TextStyle(color: Colors.white)),
-          ]),
-        ),
-      ],
+    return UserAccountMenu(
+      onLogout: onLogout,
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 16, 12, 8),
         child: Row(
@@ -1551,7 +1297,7 @@ class _UserHeader extends StatelessWidget {
               radius: 18,
               backgroundColor: AppColors.teal,
               child: Text(
-                _initials(),
+                userInitials(),
                 style: const TextStyle(
                   color: Colors.white,
                   fontSize: 13,

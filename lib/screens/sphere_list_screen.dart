@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/task_service.dart';
 import '../theme/app_colors.dart';
+import '../widgets/orbit_members_bar.dart';
 import '../widgets/task_list_item.dart';
 
 /// Mobile-only: zeigt die Sphere-Liste eines bestimmten Orbits.
@@ -77,6 +78,14 @@ class _SphereListScreenState extends State<SphereListScreen> {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
+              // Teilnehmer (Pilot + Co-Piloten) direkt unter dem Orbit-Titel –
+              // analog zur Desktop-Ansicht. Pilot kann hier Co-Piloten einladen.
+              if (widget.orbitId != null && orbit != null)
+                OrbitMembersBar(
+                  key: ValueKey('members_${widget.orbitId}'),
+                  orbitId: widget.orbitId!,
+                  onInvite: () => showInviteCoPilotDialog(context, orbit),
+                ),
               if (description.isNotEmpty)
                 Padding(
                   padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),

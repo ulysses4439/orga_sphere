@@ -27,7 +27,9 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
   Win32Window::Size size(1280, 720);
-  if (!window.Create(L"OrgaSphere", origin, size)) {
+  // Versionsnummer im Fenstertitel (grauer Titelbalken). Bei jeder
+  // Versionserhöhung hier mit pubspec.yaml und kAppVersion synchron halten.
+  if (!window.Create(L"OrgaSphere 1.0.8", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);
