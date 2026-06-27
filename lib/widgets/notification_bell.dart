@@ -120,10 +120,15 @@ class _NotificationList extends StatelessWidget {
         return Icons.person_outline;
       case 'log_added':
         return Icons.edit_note;
+      case 'reminder':
+        return Icons.alarm;
       default:
         return Icons.notifications_none;
     }
   }
+
+  Color _colorFor(String type) =>
+      type == 'reminder' ? Colors.red : AppColors.teal;
 
   @override
   Widget build(BuildContext context) {
@@ -152,7 +157,7 @@ class _NotificationList extends StatelessWidget {
                   itemBuilder: (_, i) {
                     final e = events[i];
                     return ListTile(
-                      leading: Icon(_iconFor(e.type), color: AppColors.teal),
+                      leading: Icon(_iconFor(e.type), color: _colorFor(e.type)),
                       title: Text(e.body),
                       subtitle: Text(
                         formatDateTime(e.createdAt.toLocal()),

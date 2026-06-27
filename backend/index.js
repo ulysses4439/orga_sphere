@@ -1690,6 +1690,16 @@ async function runScheduler() {
           console.error(`Scheduler: e-mail failed for task ${task.id}:`, mailErr.message);
         }
       }
+
+      // Zusätzlich als Push-Popup an alle aktiven Mitglieder (kein actor → niemand
+      // wird ausgeschlossen, Erinnerung ist zeitbasiert, nicht personenbezogen).
+      // Roter Wecker ⏰ am Anfang – analog zur Erinnerungs-Mail.
+      await emitOrbitEvent(p, {
+        orbitId: task.domainId, actorUserId: null, actorName: null,
+        type: 'reminder', sphereId: task.id, sphereTitle: task.title, orbitName: task.domainName,
+        body: `⏰ Erinnerung: ${task.title}`,
+      });
+
       await p.request()
         .input('id',  sql.NVarChar,  task.id)
         .input('now', sql.DateTime2, now)
