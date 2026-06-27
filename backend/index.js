@@ -6,6 +6,7 @@ const nodemailer = require('nodemailer');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
+const admin = require('firebase-admin');
 require('dotenv').config();
 
 const app = express();
@@ -103,6 +104,108 @@ async function sendReminderEmail(toAddresses, task, domainName) {
       <p style="color:#666;font-size:12px">OrgaSphere – Orbit-weite Erinnerung</p>
     `
   );
+}
+
+// -----------------------------------------------------------------------
+// Push (Firebase Cloud Messaging)
+// -----------------------------------------------------------------------
+
+// Service-Account als JSON im App-Setting FIREBASE_SERVICE_ACCOUNT.
+// Fehlt die Config, bleibt Push ein No-Op (analog zu mailTransport oben).
+let fcmReady = false;
+try {
+  const raw = process.env.FIREBASE_SERVICE_ACCOUNT;
+  if (raw) {
+    const serviceAccount = JSON.parse(raw);
+    admin.initializeApp({ credential: admin.credential.cert(serviceAccount) });
+    fcmReady = true;
+    console.log('FCM ready');
+  } else {
+    console.log('FIREBASE_SERVICE_ACCOUNT not set – push notifications disabled');
+  }
+} catch (err) {
+  console.error('FCM init failed – push notifications disabled:', err.message);
+}
+
+// Sendet einen Push an eine Liste von Tokens und entfernt ungültige Tokens aus der DB.
+async function sendPushToTokens(p, tokens, body, data) {
+  if (!fcmReady || tokens.length === 0) return;
+  try {
+    const response = await admin.messaging().sendEachForMulticast({
+      tokens,
+      notification: { title: 'OrgaSphere', body },
+      data,
+      android: { priority: 'high', notification: { channelId: 'orga_events' } },
+    });
+    const stale = [];
+    response.responses.forEach((r, i) => {
+      if (!r.success) {
+        const code = r.error?.code || '';
+        if (code.includes('registration-token-not-registered') ||
+            code.includes('invalid-argument')) {
+          stale.push(tokens[i]);
+        }
+      }
+    });
+    for (const token of stale) {
+      await p.request()
+        .input('token', sql.NVarChar, token)
+        .query('DELETE FROM DeviceToken WHERE token = @token');
+    }
+    if (stale.length > 0) console.log(`FCM: removed ${stale.length} stale token(s)`);
+  } catch (err) {
+    console.error('FCM send failed:', err.message);
+  }
+}
+
+// Schreibt ein Team-Ereignis in OrbitEvent und pusht es an alle aktiven Mitglieder
+// des Orbits AUSSER dem Auslöser. Darf die auslösende Aktion niemals scheitern lassen.
+async function emitOrbitEvent(p, { orbitId, actorUserId, actorName, type, sphereId, sphereTitle, orbitName, body }) {
+  try {
+    await p.request()
+      .input('id',          sql.NVarChar,  uuidv4())
+      .input('orbitId',     sql.NVarChar,  orbitId)
+      .input('actorUserId', sql.NVarChar,  actorUserId || null)
+      .input('actorName',   sql.NVarChar,  actorName || null)
+      .input('type',        sql.NVarChar,  type)
+      .input('sphereId',    sql.NVarChar,  sphereId || null)
+      .input('sphereTitle', sql.NVarChar,  sphereTitle || null)
+      .input('orbitName',   sql.NVarChar,  orbitName || null)
+      .input('body',        sql.NVarChar,  body)
+      .query(`INSERT INTO OrbitEvent
+                (id, orbitId, actorUserId, actorName, type, sphereId, sphereTitle, orbitName, body)
+              VALUES (@id, @orbitId, @actorUserId, @actorName, @type, @sphereId, @sphereTitle, @orbitName, @body)`);
+
+    const recipients = await p.request()
+      .input('orbitId', sql.NVarChar, orbitId)
+      .input('actor',   sql.NVarChar, actorUserId || '')
+      .query(`SELECT dt.token
+              FROM OrbitMember om
+              JOIN DeviceToken dt ON dt.userId = om.userId
+              WHERE om.orbitId = @orbitId AND om.status = 'active' AND om.userId <> @actor`);
+    const tokens = recipients.recordset.map(r => r.token).filter(Boolean);
+
+    await sendPushToTokens(p, tokens, body, {
+      type,
+      orbitId: orbitId || '',
+      sphereId: sphereId || '',
+    });
+  } catch (err) {
+    console.error('emitOrbitEvent failed:', err.message);
+  }
+}
+
+// Klarnamen des eingeloggten Nutzers frisch aus AppUser holen (displayName, sonst email).
+async function resolveActorName(p, userId, fallbackEmail) {
+  try {
+    const row = await p.request()
+      .input('userId', sql.NVarChar, userId)
+      .query('SELECT displayName, email FROM AppUser WHERE id = @userId');
+    const u = row.recordset[0] || {};
+    return (u.displayName && u.displayName.trim()) || u.email || fallbackEmail;
+  } catch {
+    return fallbackEmail;
+  }
 }
 
 // -----------------------------------------------------------------------
@@ -1023,6 +1126,18 @@ app.post('/tasks', requireAuth, async (req, res) => {
               VALUES (@id, @domainId, @title, @description, @startDate, @dueDate,
                       @recurrenceFrequency, @recurrenceInterval, 'open')`);
     res.json(result.recordset[0]);
+
+    // Team-Benachrichtigung (nach der Antwort – darf die Erstellung nicht blockieren)
+    const orbitRow = await p.request()
+      .input('id', sql.NVarChar, domainId)
+      .query('SELECT name FROM TaskDomain WHERE id = @id');
+    const orbitName = orbitRow.recordset[0]?.name || 'Orbit';
+    const actorName = await resolveActorName(p, req.user.userId, req.user.email);
+    await emitOrbitEvent(p, {
+      orbitId: domainId, actorUserId: req.user.userId, actorName,
+      type: 'sphere_created', sphereId: id, sphereTitle: title, orbitName,
+      body: `${actorName} hat „${title}" zu „${orbitName}" hinzugefügt.`,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1053,6 +1168,17 @@ app.patch('/tasks/:id/done', requireAuth, async (req, res) => {
 
     const nextTask = await createNextCapsuleIfNeeded(p, task);
     res.json({ success: true, nextTask: nextTask || null });
+
+    const orbitRow = await p.request()
+      .input('id', sql.NVarChar, task.domainId)
+      .query('SELECT name FROM TaskDomain WHERE id = @id');
+    const orbitName = orbitRow.recordset[0]?.name || 'Orbit';
+    const actorName = await resolveActorName(p, req.user.userId, req.user.email);
+    await emitOrbitEvent(p, {
+      orbitId: task.domainId, actorUserId: req.user.userId, actorName,
+      type: 'sphere_landed', sphereId: id, sphereTitle: task.title, orbitName,
+      body: `${actorName} hat „${task.title}" in „${orbitName}" erledigt.`,
+    });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1244,6 +1370,29 @@ app.patch('/tasks/:id/assignee', requireAuth, async (req, res) => {
       .input('memberId', sql.NVarChar, memberId || null)
       .query('UPDATE Task SET assignedToMemberId = @memberId WHERE id = @id');
     res.json({ success: true });
+
+    // Nur bei aktiver Zuweisung benachrichtigen (nicht beim Aufheben).
+    if (memberId) {
+      const info = await p.request()
+        .input('taskId',   sql.NVarChar, id)
+        .input('memberId', sql.NVarChar, memberId)
+        .query(`SELECT t.title AS title, d.name AS orbitName,
+                       COALESCE(au.displayName, om.email) AS assigneeName
+                FROM Task t
+                JOIN TaskDomain d ON d.id = t.domainId
+                LEFT JOIN OrbitMember om ON om.id = @memberId
+                LEFT JOIN AppUser au ON au.id = om.userId
+                WHERE t.id = @taskId`);
+      const row = info.recordset[0];
+      if (row) {
+        const actorName = await resolveActorName(p, req.user.userId, req.user.email);
+        await emitOrbitEvent(p, {
+          orbitId, actorUserId: req.user.userId, actorName,
+          type: 'sphere_assigned', sphereId: id, sphereTitle: row.title, orbitName: row.orbitName,
+          body: `${actorName} hat „${row.title}" an ${row.assigneeName || 'jemanden'} übergeben.`,
+        });
+      }
+    }
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1386,6 +1535,104 @@ app.post('/logs', requireAuth, async (req, res) => {
     const taskStatus = update.rowsAffected[0] > 0 ? 'inProgress' : null;
 
     res.json({ ...result.recordset[0], user: userLabel, taskStatus });
+
+    const orbitId = taskResult.recordset[0].domainId;
+    const titleRow = await p.request()
+      .input('taskId', sql.NVarChar, taskId)
+      .query(`SELECT t.title AS title, d.name AS orbitName
+              FROM Task t JOIN TaskDomain d ON d.id = t.domainId WHERE t.id = @taskId`);
+    const tr = titleRow.recordset[0] || {};
+    await emitOrbitEvent(p, {
+      orbitId, actorUserId: req.user.userId, actorName: userLabel,
+      type: 'log_added', sphereId: taskId, sphereTitle: tr.title, orbitName: tr.orbitName,
+      body: `${userLabel} hat einen Eintrag zu „${tr.title || 'einer Sphere'}" hinzugefügt.`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// -----------------------------------------------------------------------
+// Devices (Push-Token-Registrierung)
+// -----------------------------------------------------------------------
+
+app.post('/devices', requireAuth, async (req, res) => {
+  const { token, platform } = req.body;
+  if (!token) return res.status(400).json({ error: 'token erforderlich' });
+  try {
+    const p = await getPool();
+    // Upsert: existiert das Token bereits, Besitzer + lastSeenAt aktualisieren.
+    const existing = await p.request()
+      .input('token', sql.NVarChar, token)
+      .query('SELECT id FROM DeviceToken WHERE token = @token');
+    if (existing.recordset.length > 0) {
+      await p.request()
+        .input('token',    sql.NVarChar,  token)
+        .input('userId',   sql.NVarChar,  req.user.userId)
+        .input('platform', sql.NVarChar,  platform || 'unknown')
+        .query(`UPDATE DeviceToken
+                SET userId = @userId, platform = @platform, lastSeenAt = GETUTCDATE()
+                WHERE token = @token`);
+    } else {
+      await p.request()
+        .input('id',       sql.NVarChar, uuidv4())
+        .input('userId',   sql.NVarChar, req.user.userId)
+        .input('token',    sql.NVarChar, token)
+        .input('platform', sql.NVarChar, platform || 'unknown')
+        .query(`INSERT INTO DeviceToken (id, userId, token, platform)
+                VALUES (@id, @userId, @token, @platform)`);
+    }
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.delete('/devices', requireAuth, async (req, res) => {
+  const { token } = req.body;
+  if (!token) return res.status(400).json({ error: 'token erforderlich' });
+  try {
+    const p = await getPool();
+    await p.request()
+      .input('token',  sql.NVarChar, token)
+      .input('userId', sql.NVarChar, req.user.userId)
+      .query('DELETE FROM DeviceToken WHERE token = @token AND userId = @userId');
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// -----------------------------------------------------------------------
+// Events (Team-Aktivitäten-Feed)
+// -----------------------------------------------------------------------
+
+app.get('/events', requireAuth, async (req, res) => {
+  const { since } = req.query;
+  try {
+    const p = await getPool();
+    const orbitIds = await getUserOrbitIds(p, req.user.userId);
+    if (orbitIds.length === 0) return res.json([]);
+
+    const placeholders = orbitIds.map((_, i) => `@oid${i}`).join(',');
+    const request = p.request().input('actor', sql.NVarChar, req.user.userId);
+    orbitIds.forEach((id, i) => request.input(`oid${i}`, sql.NVarChar, id));
+
+    let sinceClause = '';
+    if (since) {
+      request.input('since', sql.DateTime2, new Date(since));
+      sinceClause = 'AND createdAt > @since';
+    }
+
+    const result = await request.query(
+      `SELECT TOP 50 id, orbitId, actorUserId, actorName, type, sphereId, sphereTitle, orbitName, body, createdAt
+       FROM OrbitEvent
+       WHERE orbitId IN (${placeholders})
+         AND (actorUserId IS NULL OR actorUserId <> @actor)
+         ${sinceClause}
+       ORDER BY createdAt DESC`
+    );
+    res.json(result.recordset);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

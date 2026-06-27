@@ -6,7 +6,9 @@ import '../services/api_service.dart';
 import '../services/auth_service.dart';
 import '../services/task_service.dart';
 import '../services/reminder_service.dart';
+import '../services/event_poll_service.dart';
 import '../services/sound_service.dart';
+import '../widgets/notification_bell.dart';
 import '../theme/app_colors.dart';
 import '../utils/date_format.dart';
 import '../widgets/task_list_item.dart';
@@ -52,7 +54,10 @@ class _TaskListScreenState extends State<TaskListScreen>
       final domains = _taskService.getDomains();
       if (domains.isNotEmpty) _selectedOrbitId = domains.first.id;
       setState(() {});
-      _pollTimer = Timer.periodic(_pollInterval, (_) => _taskService.refresh());
+      _pollTimer = Timer.periodic(_pollInterval, (_) {
+        _taskService.refresh();
+        EventPollService().poll();
+      });
     });
   }
 
@@ -78,6 +83,7 @@ class _TaskListScreenState extends State<TaskListScreen>
     if (state == AppLifecycleState.resumed) {
       _reminderService.checkNow();
       _taskService.refresh();
+      EventPollService().poll();
     }
   }
 
@@ -177,6 +183,10 @@ class _TaskListScreenState extends State<TaskListScreen>
         toolbarHeight: 64,
         centerTitle: true,
         title: Image.asset('assets/images/logo_full.png', height: 52, fit: BoxFit.contain),
+        actions: const [
+          NotificationBell(),
+          SizedBox(width: 8),
+        ],
         bottom: PreferredSize(
           preferredSize: const Size.fromHeight(1),
           child: Container(color: Colors.black, height: 1),
@@ -650,6 +660,7 @@ class _TaskListScreenState extends State<TaskListScreen>
         centerTitle: true,
         title: Image.asset('assets/images/logo_full.png', height: 52, fit: BoxFit.contain),
         actions: [
+          const NotificationBell(iconColor: Colors.white),
           UserAccountMenu(
             onLogout: widget.onLogout,
             offset: const Offset(0, 48),

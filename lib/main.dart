@@ -2,6 +2,9 @@ import 'package:flutter/material.dart';
 import 'app_globals.dart';
 import 'screens/screens.dart';
 import 'services/auth_service.dart';
+import 'services/event_poll_service.dart';
+import 'services/notification_center.dart';
+import 'services/push_service.dart';
 import 'services/task_service.dart';
 import 'theme/app_theme.dart';
 
@@ -67,14 +70,27 @@ class _AuthGateState extends State<AuthGate> {
 
   Future<void> _init() async {
     await AuthService.init();
+    if (AuthService.isLoggedIn) _startNotifications();
     if (mounted) setState(() => _loggedIn = AuthService.isLoggedIn);
   }
 
-  void _onLogin() => setState(() => _loggedIn = true);
+  void _onLogin() {
+    _startNotifications();
+    setState(() => _loggedIn = true);
+  }
 
-  void _onLogout() {
+  // Push-Registrierung (FCM) + ersten Event-Poll anstoßen.
+  void _startNotifications() {
+    PushService().init();
+    EventPollService().poll();
+  }
+
+  Future<void> _onLogout() async {
+    await PushService().unregister();
+    EventPollService().reset();
+    NotificationCenter().clear();
     TaskService.reset();
-    setState(() => _loggedIn = false);
+    if (mounted) setState(() => _loggedIn = false);
   }
 
   @override

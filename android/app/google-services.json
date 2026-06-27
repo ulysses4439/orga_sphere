@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "910784515241",
+    "project_id": "orgasphere-e609a",
+    "storage_bucket": "orgasphere-e609a.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:910784515241:android:6e8faa7d2d7ce8b40b2db8",
+        "android_client_info": {
+          "package_name": "com.example.orga_sphere"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyC_0U8BpekUZyy3aqAnVuFwc6lj0fIh3Ec"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -316,6 +316,41 @@ class ApiService {
       newTaskStatus: body['taskStatus'] as String?,
     );
   }
+
+  // -----------------------------------------------------------------------
+  // Devices (Push-Token) & Events (Team-Aktivitäten)
+  // -----------------------------------------------------------------------
+
+  static Future<void> registerDevice(String token, String platform) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/devices'),
+      headers: _headers,
+      body: jsonEncode({'token': token, 'platform': platform}),
+    );
+    _checkStatus(response);
+  }
+
+  static Future<void> deleteDevice(String token) async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/devices'),
+      headers: _headers,
+      body: jsonEncode({'token': token}),
+    );
+    _checkStatus(response);
+  }
+
+  static Future<List<OrbitEvent>> getEvents({DateTime? since}) async {
+    final uri = Uri.parse('$_baseUrl/events').replace(
+      queryParameters:
+          since != null ? {'since': since.toUtc().toIso8601String()} : null,
+    );
+    final response = await http.get(uri, headers: _headers);
+    _checkStatus(response);
+    final List<dynamic> data = jsonDecode(response.body);
+    return data
+        .map((j) => OrbitEvent.fromJson(j as Map<String, dynamic>))
+        .toList();
+  }
 }
 
 class UnauthorizedException implements Exception {
