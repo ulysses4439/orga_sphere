@@ -10,4 +10,4 @@ final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
 ///   1. `version:` in pubspec.yaml
 ///   2. diese Konstante (Anzeige in der App, Handy-Startseite)
 ///   3. Fenstertitel in windows/runner/main.cpp (grauer Titelbalken)
-const String kAppVersion = '1.0.9';
+const String kAppVersion = '1.0.10';
