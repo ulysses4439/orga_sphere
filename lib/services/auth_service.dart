@@ -15,9 +15,21 @@ class AuthService {
   static String? _displayName;
 
   static Future<void> init() async {
-    _token = await _storage.read(key: _tokenKey);
-    _email = await _storage.read(key: _emailKey);
-    _displayName = await _storage.read(key: _displayNameKey);
+    try {
+      _token = await _storage.read(key: _tokenKey);
+      _email = await _storage.read(key: _emailKey);
+      _displayName = await _storage.read(key: _displayNameKey);
+    } catch (_) {
+      // Verschluesselte Session laesst sich nicht mehr entschluesseln
+      // (z. B. BadPaddingException nach Neuinstallation / Keystore-Reset).
+      // Kaputte Daten verwerfen und bereinigen -> sauberer Login statt Haenger.
+      _token = null;
+      _email = null;
+      _displayName = null;
+      try {
+        await _storage.deleteAll();
+      } catch (_) {}
+    }
   }
 
   static bool get isLoggedIn => _token != null;

@@ -69,9 +69,14 @@ class _AuthGateState extends State<AuthGate> {
   }
 
   Future<void> _init() async {
-    await AuthService.init();
-    if (AuthService.isLoggedIn) _startNotifications();
-    if (mounted) setState(() => _loggedIn = AuthService.isLoggedIn);
+    try {
+      await AuthService.init();
+      if (AuthService.isLoggedIn) _startNotifications();
+    } catch (_) {
+      // Nie im Lade-Spinner haengen bleiben; im Zweifel Login zeigen.
+    } finally {
+      if (mounted) setState(() => _loggedIn = AuthService.isLoggedIn);
+    }
   }
 
   void _onLogin() {
