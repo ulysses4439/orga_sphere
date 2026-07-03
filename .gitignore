@@ -47,3 +47,15 @@ app.*.map.json
 /android/app/debug
 /android/app/profile
 /android/app/release
+
+# Release-/Distributions-Artefakte -> per GitHub Releases veroeffentlicht,
+# nicht ins Repo committen (haelt die Historie schlank).
+*.apk
+*.msix
+*.aab
+OrgaSphere_Beta_*.zip
+OrgaSphere_Beta_*/
+/beta/
+
+# Signatur-Zertifikat mit privatem Schluessel -> niemals committen!
+*.pfx
