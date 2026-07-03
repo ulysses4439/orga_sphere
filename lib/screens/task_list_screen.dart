@@ -742,6 +742,7 @@ class _TaskListScreenState extends State<TaskListScreen>
             title: Text(d.name, style: const TextStyle(color: Colors.white)),
             trailing: const Icon(Icons.chevron_right, color: Colors.white70),
             onTap: () => _pushSphereList(d.id, d.name),
+            onLongPress: () => _showMobileOrbitMenu(d),
           ),
         ),
       ],
@@ -800,6 +801,76 @@ class _TaskListScreenState extends State<TaskListScreen>
           ),
           const SizedBox(height: 4),
         ],
+      ),
+    );
+  }
+
+  Future<void> _showMobileOrbitMenu(TaskDomain domain) async {
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: const Color(0xFF1C1C2E),
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+              child: Row(
+                children: [
+                  Container(
+                    width: 14,
+                    height: 14,
+                    decoration:
+                        BoxDecoration(color: domain.color, shape: BoxShape.circle),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      domain.name,
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 16,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const Divider(color: Colors.white12, height: 8),
+            ListTile(
+              leading: const Icon(Icons.person_add_outlined, color: Colors.white70),
+              title: const Text('Co-Pilot einladen',
+                  style: TextStyle(color: Colors.white)),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _showInviteCoPilotDialog(domain);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.edit_outlined, color: Colors.white70),
+              title: const Text('Umbenennen',
+                  style: TextStyle(color: Colors.white)),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _showRenameOrbitDialog(domain);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: const Text('Löschen', style: TextStyle(color: Colors.red)),
+              onTap: () {
+                Navigator.of(ctx).pop();
+                _showDeleteOrbitDialog(domain);
+              },
+            ),
+            const SizedBox(height: 8),
+          ],
+        ),
       ),
     );
   }
