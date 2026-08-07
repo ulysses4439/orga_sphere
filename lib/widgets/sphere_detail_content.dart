@@ -210,19 +210,36 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     }
   }
 
+  /// Neue Erinnerung anlegen: Datum, dann Uhrzeit.
   Future<void> _pickReminder() async {
     // .toLocal() fixes UTC-stored reminderAt showing wrong time in the picker.
     final initial = _task?.reminderAt?.toLocal();
+    final result = await pickReminderDateTime(context, initial: initial);
+    await _applyReminder(result);
+  }
 
-    final result = await showDialog<DateTime>(
-      context: context,
-      builder: (ctx) => ReminderPickerDialog(initialDateTime: initial),
-    );
-    if (result == null || !mounted) return;
+  /// Nur den Tag ändern – die eingestellte Uhrzeit bleibt bestehen.
+  Future<void> _editReminderDate() async {
+    final current = _task?.reminderAt?.toLocal();
+    if (current == null) return;
+    final result = await pickReminderDate(context, current);
+    await _applyReminder(result);
+  }
+
+  /// Nur die Uhrzeit ändern – der eingestellte Tag bleibt bestehen.
+  Future<void> _editReminderTime() async {
+    final current = _task?.reminderAt?.toLocal();
+    if (current == null) return;
+    final result = await pickReminderTime(context, current);
+    await _applyReminder(result);
+  }
+
+  Future<void> _applyReminder(DateTime? value) async {
+    if (value == null || !mounted) return;
 
     setState(() => _isBusy = true);
     try {
-      await _taskService.setReminder(widget.taskId, result);
+      await _taskService.setReminder(widget.taskId, value);
       if (!mounted) return;
       setState(() {
         _task = _taskService.getTaskById(widget.taskId);
@@ -821,25 +838,41 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
       );
     }
 
+    final local = task.reminderAt!.toLocal();
     final reminderExpired =
         task.reminderAt!.isBefore(DateTime.now()) && task.status != TaskStatus.done;
     final reminderColor = reminderExpired ? Colors.red : AppColors.teal;
 
-    if (reminderExpired) {
-      return Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(
-          children: [
-            Icon(Icons.notifications_active, color: reminderColor, size: 20),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                _formatReminderDate(task.reminderAt!),
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      color: reminderColor,
-                    ),
-              ),
+    // Datum und Uhrzeit sind einzeln antippbar: ein Tipp öffnet genau den
+    // passenden Dialog, statt den Zeitpunkt löschen und neu setzen zu müssen.
+    return Padding(
+      padding: const EdgeInsets.symmetric(vertical: 6),
+      child: Row(
+        children: [
+          Icon(Icons.notifications_active, color: reminderColor, size: 20),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Wrap(
+              spacing: 4,
+              runSpacing: 4,
+              crossAxisAlignment: WrapCrossAlignment.center,
+              children: [
+                _buildReminderPart(
+                  label: formatDate(local),
+                  tooltip: 'Datum ändern',
+                  color: reminderColor,
+                  onTap: _editReminderDate,
+                ),
+                _buildReminderPart(
+                  label: formatTime(local),
+                  tooltip: 'Uhrzeit ändern',
+                  color: reminderColor,
+                  onTap: _editReminderTime,
+                ),
+              ],
             ),
+          ),
+          if (reminderExpired)
             TextButton.icon(
               onPressed: _isBusy ? null : _clearReminder,
               icon: const Icon(Icons.notifications_off_outlined, size: 16),
@@ -849,37 +882,44 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                 textStyle: const TextStyle(fontSize: 12),
               ),
-            ),
-          ],
-        ),
-      );
-    }
-
-    return InkWell(
-      onTap: _isBusy ? null : _pickReminder,
-      borderRadius: BorderRadius.circular(8),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 6),
-        child: Row(
-          children: [
-            Icon(Icons.notifications_active, color: reminderColor, size: 20),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                _formatReminderDate(task.reminderAt!),
-                style: Theme.of(context).textTheme.titleSmall?.copyWith(
-                      color: reminderColor,
-                    ),
-              ),
-            ),
+            )
+          else
             IconButton(
               icon: Icon(Icons.close, size: 18, color: Colors.grey[500]),
-              tooltip: 'Erinnerung entfernen',
+              tooltip: 'Erinnerung löschen',
               padding: EdgeInsets.zero,
               constraints: const BoxConstraints(),
               onPressed: _isBusy ? null : _clearReminder,
             ),
-          ],
+        ],
+      ),
+    );
+  }
+
+  /// Antippbarer Teil des Erinnerungszeitpunkts (Datum bzw. Uhrzeit).
+  /// Die gestrichelte Unterstreichung signalisiert die Bearbeitbarkeit.
+  Widget _buildReminderPart({
+    required String label,
+    required String tooltip,
+    required Color color,
+    required VoidCallback onTap,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: InkWell(
+        onTap: _isBusy ? null : onTap,
+        borderRadius: BorderRadius.circular(6),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          child: Text(
+            label,
+            style: Theme.of(context).textTheme.titleSmall?.copyWith(
+                  color: color,
+                  decoration: TextDecoration.underline,
+                  decorationStyle: TextDecorationStyle.dotted,
+                  decorationColor: color.withValues(alpha: 0.6),
+                ),
+          ),
         ),
       ),
     );
@@ -1237,6 +1277,4 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
   }
 
   String _formatDate(DateTime date) => formatDateTime(date);
-
-  String _formatReminderDate(DateTime date) => formatDateTime(date.toLocal());
 }

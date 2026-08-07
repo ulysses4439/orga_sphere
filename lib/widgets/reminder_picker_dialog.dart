@@ -1,151 +1,83 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
-/// Combined date + time picker dialog for setting a reminder.
-/// Returns a [DateTime] in local time, or null if cancelled.
-class ReminderPickerDialog extends StatefulWidget {
-  final DateTime? initialDateTime;
-  const ReminderPickerDialog({super.key, this.initialDateTime});
+/// Auswahl des Erinnerungszeitpunkts über die eingebauten Material-Dialoge.
+///
+/// Bewusst zwei getrennte Schritte statt eines eigenen Kombi-Dialogs: Der
+/// selbstgebaute Dialog war auf Handys zu hoch (Schaltflächen lagen über dem
+/// Kalender) und erzwang für die Uhrzeit die Zifferntastatur, die den halben
+/// Dialog verdeckte. Die Standard-Dialoge bringen für kleine Bildschirme eine
+/// eigene Darstellung mit und lassen die Uhrzeit per Zifferblatt wählen.
+///
+/// Die Beschriftungen sind deutsch, weil die App fest auf `de_DE` läuft
+/// (siehe `localizationsDelegates` in lib/main.dart).
 
-  @override
-  State<ReminderPickerDialog> createState() => _ReminderPickerDialogState();
+/// Startpunkt für den Kalender – nie vor heute, sonst verweigert
+/// [showDatePicker] den Dienst (initialDate muss >= firstDate sein).
+DateTime _notBeforeToday(DateTime value) {
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final day = DateTime(value.year, value.month, value.day);
+  return day.isBefore(today) ? today : day;
 }
 
-class _ReminderPickerDialogState extends State<ReminderPickerDialog> {
-  late DateTime _selectedDate;
-  late final TextEditingController _hourCtrl;
-  late final TextEditingController _minCtrl;
+/// Fragt Datum und danach Uhrzeit ab. Gibt `null` zurück, sobald einer der
+/// beiden Schritte abgebrochen wird.
+Future<DateTime?> pickReminderDateTime(
+  BuildContext context, {
+  DateTime? initial,
+}) async {
+  final start = initial ?? DateTime.now().add(const Duration(hours: 1));
 
-  @override
-  void initState() {
-    super.initState();
-    final now = DateTime.now();
-    final initial = widget.initialDateTime ?? now;
-    _selectedDate = initial.isBefore(now)
-        ? DateTime(now.year, now.month, now.day)
-        : DateTime(initial.year, initial.month, initial.day);
-    _hourCtrl = TextEditingController(
-        text: initial.hour.toString().padLeft(2, '0'));
-    _minCtrl = TextEditingController(
-        text: initial.minute.toString().padLeft(2, '0'));
-  }
+  final date = await _askDate(context, start);
+  if (date == null || !context.mounted) return null;
 
-  @override
-  void dispose() {
-    _hourCtrl.dispose();
-    _minCtrl.dispose();
-    super.dispose();
-  }
+  final time = await _askTime(context, start);
+  if (time == null) return null;
 
-  int get _hour => int.tryParse(_hourCtrl.text) ?? -1;
-  int get _minute => int.tryParse(_minCtrl.text) ?? -1;
-  bool get _valid => _hour >= 0 && _hour <= 23 && _minute >= 0 && _minute <= 59;
-
-  void _confirm() {
-    if (!_valid) return;
-    Navigator.pop(
-      context,
-      DateTime(_selectedDate.year, _selectedDate.month, _selectedDate.day,
-          _hour, _minute),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final now = DateTime.now();
-    return AlertDialog(
-      title: const Text('Erinnerung setzen'),
-      contentPadding: const EdgeInsets.fromLTRB(8, 16, 8, 0),
-      content: SizedBox(
-        width: 320,
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            CalendarDatePicker(
-              initialDate: _selectedDate,
-              firstDate: DateTime(now.year, now.month, now.day),
-              lastDate: DateTime(now.year + 5),
-              onDateChanged: (d) => setState(() => _selectedDate = d),
-            ),
-            const Divider(height: 1),
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 16),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  const Text('Uhrzeit',
-                      style: TextStyle(fontWeight: FontWeight.w500)),
-                  const SizedBox(width: 16),
-                  _TimeField(
-                      controller: _hourCtrl,
-                      hint: 'hh',
-                      max: 23,
-                      onChanged: (_) => setState(() {})),
-                  const Padding(
-                    padding: EdgeInsets.symmetric(horizontal: 6),
-                    child: Text(':',
-                        style: TextStyle(
-                            fontSize: 22, fontWeight: FontWeight.bold)),
-                  ),
-                  _TimeField(
-                      controller: _minCtrl,
-                      hint: 'mm',
-                      max: 59,
-                      onChanged: (_) => setState(() {})),
-                  const SizedBox(width: 8),
-                  const Text('Uhr'),
-                ],
-              ),
-            ),
-          ],
-        ),
-      ),
-      actions: [
-        TextButton(
-          onPressed: () => Navigator.pop(context),
-          child: const Text('Abbrechen'),
-        ),
-        FilledButton(
-          onPressed: _valid ? _confirm : null,
-          child: const Text('Speichern'),
-        ),
-      ],
-    );
-  }
+  return DateTime(date.year, date.month, date.day, time.hour, time.minute);
 }
 
-class _TimeField extends StatelessWidget {
-  final TextEditingController controller;
-  final String hint;
-  final int max;
-  final ValueChanged<String> onChanged;
+/// Ändert nur den Tag und behält die eingestellte Uhrzeit bei.
+Future<DateTime?> pickReminderDate(
+  BuildContext context,
+  DateTime current,
+) async {
+  final date = await _askDate(context, current);
+  if (date == null) return null;
+  return DateTime(
+      date.year, date.month, date.day, current.hour, current.minute);
+}
 
-  const _TimeField({
-    required this.controller,
-    required this.hint,
-    required this.max,
-    required this.onChanged,
-  });
+/// Ändert nur die Uhrzeit und behält den eingestellten Tag bei.
+Future<DateTime?> pickReminderTime(
+  BuildContext context,
+  DateTime current,
+) async {
+  final time = await _askTime(context, current);
+  if (time == null) return null;
+  return DateTime(
+      current.year, current.month, current.day, time.hour, time.minute);
+}
 
-  @override
-  Widget build(BuildContext context) {
-    return SizedBox(
-      width: 52,
-      child: TextField(
-        controller: controller,
-        keyboardType: TextInputType.number,
-        textAlign: TextAlign.center,
-        maxLength: 2,
-        onChanged: onChanged,
-        inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-        decoration: InputDecoration(
-          hintText: hint,
-          counterText: '',
-          contentPadding:
-              const EdgeInsets.symmetric(horizontal: 4, vertical: 10),
-          border: const OutlineInputBorder(),
-        ),
-      ),
-    );
-  }
+Future<DateTime?> _askDate(BuildContext context, DateTime start) {
+  final now = DateTime.now();
+  return showDatePicker(
+    context: context,
+    initialDate: _notBeforeToday(start),
+    firstDate: DateTime(now.year, now.month, now.day),
+    lastDate: DateTime(now.year + 5),
+    helpText: 'Datum der Erinnerung',
+    cancelText: 'Abbrechen',
+    confirmText: 'Weiter',
+  );
+}
+
+Future<TimeOfDay?> _askTime(BuildContext context, DateTime start) {
+  return showTimePicker(
+    context: context,
+    initialTime: TimeOfDay(hour: start.hour, minute: start.minute),
+    helpText: 'Uhrzeit der Erinnerung',
+    cancelText: 'Abbrechen',
+    confirmText: 'Speichern',
+  );
 }

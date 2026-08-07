@@ -133,3 +133,32 @@ ergäben 20 erfasste Positionen 20 Meldungen beim Co-Piloten.
   „Aktiv"/„Archiv" — „Archiv" wäre bei 24-Stunden-Löschung irreführend.
 - Auf dem Desktop ersetzt die schlanke Eingabe die bestehende Schnellerfassung an derselben
   Stelle (unten im Panel), statt eine zweite Eingabestelle einzuführen.
+
+### 6. Erinnerungs-Dialog auf dem Handy unbrauchbar, Zeitpunkt nicht editierbar
+**Gemeldet:** 07.08.2026 · **Erledigt in:** v1.0.13 · **Plattformen:** Desktop + App
+
+**Problem 1:** Der selbstgebaute Kombi-Dialog („Erinnerung setzen") war auf dem Handy zu hoch —
+„Abbrechen"/„Speichern" lagen quer über dem Kalender. Für die Uhrzeit erzwang er die
+Zifferntastatur, die den halben Dialog verdeckte.
+
+**Problem 2:** Ein einmal gesetzter Erinnerungszeitpunkt ließ sich nicht ändern — nur löschen
+und komplett neu eingeben.
+
+**Ursache zu 1:** Der Dialoginhalt war eine `Column` ohne Scroll-Möglichkeit bei fest
+gesetzter Breite (320). Der eingebettete `CalendarDatePicker` braucht mehr Höhe, als ein Dialog
+auf einem Handy hergibt. Die Uhrzeit lag in zwei `TextField` — Tippen hieß zwangsläufig
+Tastatur.
+
+**Lösung:** Eigener Dialog ersetzt durch die eingebauten Material-Dialoge, nacheinander:
+`showDatePicker` → `showTimePicker`. Beide bringen für kleine Bildschirme eine eigene
+Darstellung mit; die Uhrzeit wird per Zifferblatt gewählt, ganz ohne Tastatur.
+[reminder_picker_dialog.dart](lib/widgets/reminder_picker_dialog.dart) enthält jetzt drei
+Funktionen statt einer Dialog-Klasse: kompletter Zeitpunkt, nur Datum, nur Uhrzeit.
+
+**Zu 2:** In der Detailansicht sind Datum und Uhrzeit **einzeln antippbar** (gepunktet
+unterstrichen) und öffnen jeweils genau den passenden Dialog — der andere Teil bleibt
+unverändert. „Erinnerung löschen" bleibt erhalten: als ✕ beim normalen Zustand, als
+beschrifteter roter Knopf bei abgelaufener Erinnerung.
+
+**Nebenbefund:** Abgelaufene Erinnerungen waren bisher gar nicht bearbeitbar (nur löschbar) —
+jetzt sind sie es ebenfalls.

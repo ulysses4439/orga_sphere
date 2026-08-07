@@ -58,10 +58,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
   }
 
   Future<void> _pickReminder() async {
-    final result = await showDialog<DateTime>(
-      context: context,
-      builder: (ctx) => ReminderPickerDialog(initialDateTime: _reminderAt),
-    );
+    final result = await pickReminderDateTime(context, initial: _reminderAt);
     if (result == null) return;
     setState(() => _reminderAt = result);
   }

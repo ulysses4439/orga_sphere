@@ -1032,10 +1032,7 @@ class _InlineSphereCreatorState extends State<_InlineSphereCreator> {
   }
 
   Future<void> _pickReminder() async {
-    final picked = await showDialog<DateTime>(
-      context: context,
-      builder: (_) => ReminderPickerDialog(initialDateTime: _reminderAt),
-    );
+    final picked = await pickReminderDateTime(context, initial: _reminderAt);
     if (picked != null) setState(() => _reminderAt = picked);
   }
 

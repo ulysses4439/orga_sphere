@@ -15,4 +15,8 @@ String formatDate(DateTime d) => '${_two(d.day)}.${_two(d.month)}.${d.year}';
 
 /// Datum + Uhrzeit als TT.MM.JJJJ, HH:mm Uhr, z. B. 01.07.2026, 09:00 Uhr.
 String formatDateTime(DateTime d) =>
-    '${formatDate(d)}, ${_two(d.hour)}:${_two(d.minute)} Uhr';
+    '${formatDate(d)}, ${formatTime(d)}';
+
+/// Nur die Uhrzeit als HH:mm Uhr, z. B. 09:00 Uhr. Für Stellen, an denen
+/// Datum und Uhrzeit getrennt dargestellt werden.
+String formatTime(DateTime d) => '${_two(d.hour)}:${_two(d.minute)} Uhr';
