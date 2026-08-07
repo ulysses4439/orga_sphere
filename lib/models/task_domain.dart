@@ -6,19 +6,31 @@ class TaskDomain {
   final String description;
   final String colorHex;
 
+  /// Einfache Liste im Stil einer Einkaufsliste. Positionen haben dann nur
+  /// einen Titel – keine Beschreibung, Zuweisung, Wiederholung, Termine,
+  /// Erinnerung oder Aktivitätsverlauf. Ein Klick setzt direkt auf „gelandet";
+  /// gelandete Positionen löscht der Server nach 24 Stunden.
+  ///
+  /// Wird beim Anlegen des Orbits festgelegt und ist danach unveränderlich.
+  final bool isShoppingList;
+
   TaskDomain({
     required this.id,
     required this.name,
     required this.description,
     this.colorHex = '#F5F5F5',
+    this.isShoppingList = false,
   });
 
   factory TaskDomain.fromJson(Map<String, dynamic> json) {
+    // SQL Server liefert BIT je nach Treiber als bool oder als 0/1.
+    final raw = json['isShoppingList'];
     return TaskDomain(
       id: json['id'] as String,
       name: json['name'] as String,
       description: json['description'] as String? ?? '',
       colorHex: json['color'] as String? ?? '#F5F5F5',
+      isShoppingList: raw == true || raw == 1,
     );
   }
 

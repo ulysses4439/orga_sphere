@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_localizations/flutter_localizations.dart';
 import 'app_globals.dart';
 import 'screens/screens.dart';
 import 'services/auth_service.dart';
@@ -21,6 +22,20 @@ class OrgaSphereApp extends StatelessWidget {
       title: 'OrgaSphere',
       navigatorKey: navigatorKey,
       theme: AppTheme.light,
+
+      // OrgaSphere ist durchgehend deutschsprachig – die Sprache wird fest
+      // gesetzt und folgt bewusst NICHT der Systemsprache des Geräts.
+      // Damit sind auch die eingebauten Material-Dialoge deutsch: der
+      // Datumsauswahl-Kalender beginnt die Woche am Montag (statt Sonntag wie
+      // in den USA), Monatsnamen und Schaltflächen erscheinen auf Deutsch.
+      locale: const Locale('de', 'DE'),
+      supportedLocales: const [Locale('de', 'DE')],
+      localizationsDelegates: const [
+        GlobalMaterialLocalizations.delegate,
+        GlobalWidgetsLocalizations.delegate,
+        GlobalCupertinoLocalizations.delegate,
+      ],
+
       onGenerateRoute: (settings) {
         switch (settings.name) {
           case '/task-detail':

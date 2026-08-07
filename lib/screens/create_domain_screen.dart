@@ -20,6 +20,7 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
   final _descController = TextEditingController();
   String _selectedColor = '#E6E6FA';
   bool _saving = false;
+  bool _isShoppingList = false;
 
   @override
   void dispose() {
@@ -36,6 +37,7 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
         _nameController.text.trim(),
         _descController.text.trim(),
         _selectedColor,
+        isShoppingList: _isShoppingList,
       );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
@@ -141,6 +143,23 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
                         ),
                       ],
                     ),
+                  ),
+                  const SizedBox(height: 16),
+                  // Einfache Liste: bewusst nur hier wählbar. Nachträgliches
+                  // Umschalten würde die Frage aufwerfen, was mit Terminen,
+                  // Wiederholungen und Verläufen bestehender Spheres passiert.
+                  CheckboxListTile(
+                    value: _isShoppingList,
+                    onChanged: (v) =>
+                        setState(() => _isShoppingList = v ?? false),
+                    title: const Text('Einfache Liste (z. B. Einkaufsliste)'),
+                    subtitle: const Text(
+                      'Positionen haben nur einen Namen. Ein Tippen hakt sie ab, '
+                      'nach 24 Stunden verschwinden sie endgültig. '
+                      'Später nicht mehr änderbar.',
+                    ),
+                    controlAffinity: ListTileControlAffinity.leading,
+                    contentPadding: EdgeInsets.zero,
                   ),
                   const SizedBox(height: 24),
                   FilledButton(

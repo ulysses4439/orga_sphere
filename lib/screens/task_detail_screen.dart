@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import '../widgets/notification_bell.dart';
 import '../widgets/sphere_detail_content.dart';
 
 class TaskDetailScreen extends StatelessWidget {
@@ -9,7 +10,13 @@ class TaskDetailScreen extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(title: const Text('Sphere')),
+      appBar: AppBar(
+        title: const Text('Sphere'),
+        actions: const [
+          NotificationBell(),
+          SizedBox(width: 8),
+        ],
+      ),
       body: SphereDetailContent(
         taskId: taskId,
         onDeleted: () => Navigator.of(context).pop(),

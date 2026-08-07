@@ -10,16 +10,24 @@ class TaskListItem extends StatelessWidget {
   final bool isSelected;
   final VoidCallback onTap;
 
+  /// Schlanke Darstellung für Orbits im Einkaufslisten-Modus: nur Kreis und
+  /// Name. Keine Ampel, keine Termine, kein Status-Chip – und ein Tippen auf
+  /// den Kreis hakt die Position direkt ab, ohne Zwischenschritt.
+  final bool simpleList;
+
   const TaskListItem({
     super.key,
     required this.task,
     this.domainColor,
     this.isSelected = false,
     required this.onTap,
+    this.simpleList = false,
   });
 
   @override
   Widget build(BuildContext context) {
+    if (simpleList) return _buildSimpleTile(context);
+
     final dueDate = task.dueDate;
     final now = DateTime.now();
     final isDone = task.status == TaskStatus.done;
@@ -155,6 +163,82 @@ class TaskListItem extends StatelessWidget {
                 ],
               ),
             ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ──────────────────────────────────────────────
+  // EINFACHE LISTE (Einkaufslisten-Modus)
+  // ──────────────────────────────────────────────
+
+  /// Eine Zeile: Kreis links, Name daneben. Der Kreis steht bewusst oben in
+  /// derselben Zeile wie der Name – nicht wie sonst unter dem Inhalt.
+  Widget _buildSimpleTile(BuildContext context) {
+    final isDone = task.status == TaskStatus.done;
+
+    return Card(
+      margin: const EdgeInsets.symmetric(vertical: 3, horizontal: 8),
+      color: isSelected ? AppColors.navyPale : domainColor,
+      shape: isSelected
+          ? RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(12),
+              side: const BorderSide(color: AppColors.navy, width: 2),
+            )
+          : null,
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(8),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(8, 6, 12, 6),
+          child: Row(
+            children: [
+              _buildSimpleStatusControl(context, isDone),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  task.title,
+                  style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                        decoration: isDone ? TextDecoration.lineThrough : null,
+                        color: isDone ? Colors.grey[600] : null,
+                      ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// Ein Tippen genügt: offen → erledigt. Erledigte Positionen lassen sich
+  /// zurückholen, solange der Server sie nicht nach 24 Stunden entfernt hat.
+  Widget _buildSimpleStatusControl(BuildContext context, bool isDone) {
+    return Tooltip(
+      message: isDone
+          ? 'Erledigt – tippen, um die Position zurückzuholen'
+          : 'Tippen, um abzuhaken',
+      child: InkWell(
+        onTap: () async {
+          final messenger = ScaffoldMessenger.of(context);
+          try {
+            if (isDone) {
+              await TaskService().reopenTask(task.id);
+            } else {
+              await TaskService().markAsDone(task.id);
+            }
+          } catch (e) {
+            messenger.showSnackBar(SnackBar(content: Text('Fehler: $e')));
+          }
+        },
+        borderRadius: BorderRadius.circular(24),
+        child: Padding(
+          padding: const EdgeInsets.all(6),
+          child: Icon(
+            isDone ? Icons.check_circle : Icons.radio_button_unchecked,
+            color: isDone ? Colors.green : Colors.grey[700],
+            size: 26,
           ),
         ),
       ),

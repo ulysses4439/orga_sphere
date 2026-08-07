@@ -61,11 +61,17 @@ class ApiService {
   }
 
   static Future<TaskDomain> createDomain(
-      String name, String description, String color) async {
+      String name, String description, String color,
+      {bool isShoppingList = false}) async {
     final response = await http.post(
       Uri.parse('$_baseUrl/domains'),
       headers: _headers,
-      body: jsonEncode({'name': name, 'description': description, 'color': color}),
+      body: jsonEncode({
+        'name': name,
+        'description': description,
+        'color': color,
+        'isShoppingList': isShoppingList,
+      }),
     );
     _checkStatus(response);
     return TaskDomain.fromJson(jsonDecode(response.body) as Map<String, dynamic>);

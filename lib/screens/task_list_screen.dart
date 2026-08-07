@@ -15,6 +15,7 @@ import '../widgets/task_list_item.dart';
 import '../widgets/sphere_detail_content.dart';
 import '../widgets/reminder_picker_dialog.dart';
 import '../widgets/orbit_members_bar.dart';
+import '../widgets/simple_list_widgets.dart';
 import '../widgets/user_account_menu.dart';
 
 class TaskListScreen extends StatefulWidget {
@@ -88,6 +89,13 @@ class _TaskListScreenState extends State<TaskListScreen>
   }
 
   bool get _isDesktop => MediaQuery.of(context).size.width >= _desktopBreakpoint;
+
+  /// Ist der aktuell gewählte Orbit eine einfache Liste (Einkaufslisten-Modus)?
+  bool get _isSimpleListOrbit {
+    final id = _selectedOrbitId;
+    if (id == null) return false;
+    return _taskService.getDomainById(id)?.isShoppingList ?? false;
+  }
 
   List<Task> _filtered(List<Task> tasks) {
     if (_selectedOrbitId == null) return tasks;
@@ -544,7 +552,14 @@ class _TaskListScreenState extends State<TaskListScreen>
                 ),
               ColoredBox(
                 color: const Color(0xFF2D2D2D),
-                child: TabBar(controller: _tabController, tabs: const [Tab(text: 'Im Flug'), Tab(text: 'Gelandet')]),
+                child: TabBar(
+                  controller: _tabController,
+                  // In einer Einkaufsliste wäre „Gelandet" irreführend – die
+                  // erledigten Positionen verschwinden nach 24 Stunden.
+                  tabs: _isSimpleListOrbit
+                      ? const [Tab(text: 'Offen'), Tab(text: 'Erledigt')]
+                      : const [Tab(text: 'Im Flug'), Tab(text: 'Gelandet')],
+                ),
               ),
               Expanded(
                 child: TabBarView(
@@ -568,13 +583,21 @@ class _TaskListScreenState extends State<TaskListScreen>
                             ),
                           ),
                         const Divider(height: 1),
-                        _InlineSphereCreator(
-                          orbitId: _selectedOrbitId,
-                          orbitColor: _selectedOrbitId != null
-                              ? _taskService.getDomainById(_selectedOrbitId!)?.color
-                              : null,
-                          onCreated: () => setState(() {}),
-                        ),
+                        // Einfache Listen brauchen kein Formular mit Datum und
+                        // Wiederholung – nur ein Feld für den Namen.
+                        if (_isSimpleListOrbit && _selectedOrbitId != null)
+                          SimpleListQuickAdd(
+                            orbitId: _selectedOrbitId!,
+                            onAdded: () => setState(() {}),
+                          )
+                        else
+                          _InlineSphereCreator(
+                            orbitId: _selectedOrbitId,
+                            orbitColor: _selectedOrbitId != null
+                                ? _taskService.getDomainById(_selectedOrbitId!)?.color
+                                : null,
+                            onCreated: () => setState(() {}),
+                          ),
                       ],
                     ),
                     _buildDesktopSphereList(
@@ -615,11 +638,20 @@ class _TaskListScreenState extends State<TaskListScreen>
       itemBuilder: (context, index) {
         final task = tasks[index];
         final domain = _taskService.getDomainById(task.domainId);
+        final isSimpleList = domain?.isShoppingList ?? false;
         final card = TaskListItem(
           task: task,
           domainColor: domain?.color,
-          isSelected: task.id == _selectedSphereId,
-          onTap: () => setState(() => _selectedSphereId = task.id),
+          isSelected: !isSimpleList && task.id == _selectedSphereId,
+          simpleList: isSimpleList,
+          // Listenpositionen öffnen kein Detailpanel – ein kleiner Dialog zum
+          // Umbenennen und Löschen genügt (wie in der Handy-Version).
+          onTap: isSimpleList
+              ? () async {
+                  await showSimpleListItemDialog(context, task);
+                  if (mounted) setState(() {});
+                }
+              : () => setState(() => _selectedSphereId = task.id),
         );
         return Draggable<Task>(
           data: task,
@@ -660,7 +692,10 @@ class _TaskListScreenState extends State<TaskListScreen>
         centerTitle: true,
         title: Image.asset('assets/images/logo_full.png', height: 52, fit: BoxFit.contain),
         actions: [
-          const NotificationBell(iconColor: Colors.white),
+          // Kein iconColor: die AppBar liegt auf navyPale (#E6EEF7), ein weißes
+          // Icon wäre darauf praktisch unsichtbar. Die Theme-Vordergrundfarbe
+          // (Navy) ist hier richtig – wie auf dem Desktop.
+          const NotificationBell(),
           UserAccountMenu(
             onLogout: widget.onLogout,
             offset: const Offset(0, 48),
@@ -708,6 +743,11 @@ class _TaskListScreenState extends State<TaskListScreen>
     final missed = _reminderService.getMissedReminders();
 
     return ListView(
+      // Reserve unten: Systemleiste (Samsung-Navigationstasten) plus der
+      // schwebende Plus-Button – sonst liegen beide auf dem letzten Orbit.
+      padding: EdgeInsets.only(
+        bottom: MediaQuery.of(context).viewPadding.bottom + 88,
+      ),
       children: [
         // Version direkt unter dem Logo – nur auf der Startseite sichtbar.
         Padding(

@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/task_service.dart';
 import '../theme/app_colors.dart';
+import '../widgets/notification_bell.dart';
 import '../widgets/orbit_members_bar.dart';
+import '../widgets/simple_list_widgets.dart';
 import '../widgets/task_list_item.dart';
 
 /// Mobile-only: zeigt die Sphere-Liste eines bestimmten Orbits.
@@ -50,6 +52,13 @@ class _SphereListScreenState extends State<SphereListScreen> {
     return tasks.where((t) => t.domainId == widget.orbitId).toList();
   }
 
+  /// Orbit im Einkaufslisten-Modus? Steuert die abgespeckte Darstellung.
+  bool get _isSimpleList {
+    final id = widget.orbitId;
+    if (id == null) return false;
+    return _taskService.getDomainById(id)?.isShoppingList ?? false;
+  }
+
   @override
   Widget build(BuildContext context) {
     final orbit = widget.orbitId != null
@@ -63,6 +72,10 @@ class _SphereListScreenState extends State<SphereListScreen> {
         backgroundColor: Colors.black,
         appBar: AppBar(
           title: Text(widget.orbitName),
+          actions: const [
+            NotificationBell(),
+            SizedBox(width: 8),
+          ],
         ),
         // Dunkler Hintergrund wie in der Desktop-Ansicht eines Orbits;
         // die Orbit-Beschreibung steht oben unterhalb des Titels.
@@ -94,10 +107,21 @@ class _SphereListScreenState extends State<SphereListScreen> {
                     style: const TextStyle(color: Colors.white70, fontSize: 13),
                   ),
                 ),
-              const ColoredBox(
-                color: Color(0xFF2D2D2D),
+              // Schnelleingabe: tippen, Enter, nächste Position – ohne Dialog
+              // und ohne Seitenwechsel. Nur im Einkaufslisten-Modus.
+              if (_isSimpleList && widget.orbitId != null)
+                SimpleListQuickAdd(
+                  orbitId: widget.orbitId!,
+                  onAdded: () => setState(() {}),
+                ),
+              ColoredBox(
+                color: const Color(0xFF2D2D2D),
                 child: TabBar(
-                  tabs: [Tab(text: 'Aktiv'), Tab(text: 'Archiv')],
+                  // „Archiv" wäre in einer Einkaufsliste irreführend – die
+                  // erledigten Positionen verschwinden nach 24 Stunden.
+                  tabs: _isSimpleList
+                      ? const [Tab(text: 'Offen'), Tab(text: 'Erledigt')]
+                      : const [Tab(text: 'Aktiv'), Tab(text: 'Archiv')],
                 ),
               ),
               Expanded(
@@ -117,13 +141,18 @@ class _SphereListScreenState extends State<SphereListScreen> {
             ],
           ),
         ),
-        floatingActionButton: FloatingActionButton(
-          onPressed: () async {
-            await Navigator.of(context).pushNamed('/create-task', arguments: widget.orbitId);
-            setState(() {});
-          },
-          child: const Icon(Icons.add),
-        ),
+        // Im Listen-Modus überflüssig: neue Positionen entstehen über das
+        // Eingabefeld oben, ein zusätzliches Formular gibt es dort nicht.
+        floatingActionButton: _isSimpleList
+            ? null
+            : FloatingActionButton(
+                onPressed: () async {
+                  await Navigator.of(context)
+                      .pushNamed('/create-task', arguments: widget.orbitId);
+                  setState(() {});
+                },
+                child: const Icon(Icons.add),
+              ),
       ),
     );
   }
@@ -148,8 +177,18 @@ class _SphereListScreenState extends State<SphereListScreen> {
       );
     }
 
+    final isSimpleList = _isSimpleList;
+
     return ListView.builder(
-      padding: const EdgeInsets.all(8),
+      // Reserve unten: Systemleiste (Samsung-Navigationstasten) plus der
+      // schwebende Plus-Button – sonst liegen beide auf der letzten Sphere.
+      // Im Listen-Modus gibt es keinen Plus-Button, dort genügt weniger Luft.
+      padding: EdgeInsets.fromLTRB(
+        8,
+        8,
+        8,
+        MediaQuery.of(context).viewPadding.bottom + (isSimpleList ? 16 : 88),
+      ),
       itemCount: tasks.length,
       itemBuilder: (context, index) {
         final task = tasks[index];
@@ -157,9 +196,17 @@ class _SphereListScreenState extends State<SphereListScreen> {
         return TaskListItem(
           task: task,
           domainColor: domain?.color,
+          simpleList: isSimpleList,
           onTap: () async {
-            await Navigator.of(context).pushNamed('/task-detail', arguments: task.id);
-            setState(() {});
+            // Listenpositionen brauchen keine Detailseite – ein kleiner
+            // Dialog zum Umbenennen und Löschen genügt.
+            if (isSimpleList) {
+              await showSimpleListItemDialog(context, task);
+            } else {
+              await Navigator.of(context)
+                  .pushNamed('/task-detail', arguments: task.id);
+            }
+            if (mounted) setState(() {});
           },
         );
       },

@@ -116,6 +116,7 @@ class TaskService extends ChangeNotifier {
       recurrenceInterval: recurrence.interval,
     );
     _tasks.add(task);
+    notifyListeners();
     return task;
   }
 
@@ -134,11 +135,13 @@ class TaskService extends ChangeNotifier {
       task.status = TaskStatus.open;
       task.completedAt = null;
     }
+    notifyListeners();
   }
 
   Future<void> deleteTask(String taskId) async {
     await ApiService.deleteTask(taskId);
     _tasks.removeWhere((t) => t.id == taskId);
+    notifyListeners();
   }
 
   Future<void> startTask(String taskId) async {
@@ -159,18 +162,21 @@ class TaskService extends ChangeNotifier {
       );
       task?.status = newStatus;
     }
+    notifyListeners();
   }
 
   Future<void> updateTaskTitle(String taskId, String title) async {
     await ApiService.updateTaskTitle(taskId, title);
     final task = getTaskById(taskId);
     if (task != null) task.title = title;
+    notifyListeners();
   }
 
   Future<void> updateTaskDescription(String taskId, String description) async {
     await ApiService.updateTaskDescription(taskId, description);
     final task = getTaskById(taskId);
     if (task != null) task.description = description;
+    notifyListeners();
   }
 
   Future<void> updateTaskSchedule(
@@ -207,6 +213,7 @@ class TaskService extends ChangeNotifier {
         interval: recurrenceInterval ?? task.recurrence.interval,
       );
     }
+    notifyListeners();
   }
 
   /// Weist die Sphere einem OrbitMember zu (oder hebt die Zuweisung mit
@@ -232,12 +239,16 @@ class TaskService extends ChangeNotifier {
     await ApiService.setReminder(taskId, reminderAt);
     final task = getTaskById(taskId);
     if (task != null) task.reminderAt = reminderAt;
+    notifyListeners();
   }
 
   Future<TaskDomain> createDomain(
-      String name, String description, String color) async {
-    final domain = await ApiService.createDomain(name, description, color);
+      String name, String description, String color,
+      {bool isShoppingList = false}) async {
+    final domain = await ApiService.createDomain(name, description, color,
+        isShoppingList: isShoppingList);
     _domains.add(domain);
+    notifyListeners();
     return domain;
   }
 
@@ -253,17 +264,20 @@ class TaskService extends ChangeNotifier {
         colorHex: d.colorHex,
       );
     }
+    notifyListeners();
   }
 
   Future<void> deleteDomain(String domainId) async {
     await ApiService.deleteDomain(domainId);
     _domains.removeWhere((d) => d.id == domainId);
     _tasks.removeWhere((t) => t.domainId == domainId);
+    notifyListeners();
   }
 
   Future<void> moveTask(String taskId, String domainId) async {
     await ApiService.moveTask(taskId, domainId);
     final task = getTaskById(taskId);
     if (task != null) task.domainId = domainId;
+    notifyListeners();
   }
 }

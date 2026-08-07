@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
+import '../services/notification_center.dart';
 import '../services/task_service.dart';
 import '../theme/app_colors.dart';
 import '../utils/date_format.dart';
@@ -33,6 +34,7 @@ class SphereDetailContent extends StatefulWidget {
 
 class _SphereDetailContentState extends State<SphereDetailContent> {
   final TaskService _taskService = TaskService();
+  final NotificationCenter _notifications = NotificationCenter();
   late Task? _task;
   final _logTextController = TextEditingController();
   late final TextEditingController _descriptionController;
@@ -57,11 +59,35 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     _titleFocusNode = FocusNode()..addListener(_onTitleFocusChange);
     _outerScrollController = ScrollController();
     _taskService.addListener(_onServiceChanged);
+    // Wer diese Sphere ansieht, hat ihre Meldungen gesehen – das rote Badge an
+    // der Glocke muss dafür nicht extra angetippt werden.
+    _markNotificationsRead();
+    _notifications.addListener(_markNotificationsRead);
+  }
+
+  @override
+  void didUpdateWidget(SphereDetailContent oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // Desktop: das Panel wird beim Wechsel der Auswahl wiederverwendet.
+    if (oldWidget.taskId != widget.taskId) _markNotificationsRead();
+  }
+
+  /// Läuft auch bei jedem Poll erneut: Ereignisse, die eintreffen während die
+  /// Sphere offen ist, gelten ebenfalls als gesehen. Endet von selbst, sobald
+  /// nichts Ungelesenes mehr übrig ist (dann kein notifyListeners mehr).
+  void _markNotificationsRead() {
+    _notifications.markSphereRead(widget.taskId);
   }
 
   @override
   void dispose() {
+    _notifications.removeListener(_markNotificationsRead);
     _taskService.removeListener(_onServiceChanged);
+    // Noch nicht gespeicherte Eingaben sichern, BEVOR die Controller weg sind:
+    // Wer den Titel ändert und sofort auf „Zurück" tippt bzw. das Detailpanel
+    // schließt, verlässt die Ansicht ohne dass das Feld den Fokus verliert –
+    // der übliche Speicher-Auslöser greift dann nicht mehr.
+    _flushPendingEdits();
     _logTextController.dispose();
     _descriptionController.dispose();
     _descriptionFocusNode.dispose();
@@ -129,6 +155,28 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text('Fehler: $e')));
       }
+    }
+  }
+
+  /// Speichert offene Änderungen an Titel und Beschreibung beim Verlassen der
+  /// Ansicht. Läuft aus [dispose] heraus und darf deshalb weder `setState` noch
+  /// `context` verwenden. Fehler werden bewusst geschluckt – eine Meldung ließe
+  /// sich nicht mehr anzeigen, und der nächste Abgleich mit dem Backend
+  /// korrigiert die Anzeige ohnehin.
+  void _flushPendingEdits() {
+    final title = _titleController.text.trim();
+    if (title.isNotEmpty && title != _lastSavedTitle) {
+      _lastSavedTitle = title;
+      _taskService
+          .updateTaskTitle(widget.taskId, title)
+          .catchError((Object _) {});
+    }
+    final description = _descriptionController.text;
+    if (description != _lastSavedDescription) {
+      _lastSavedDescription = description;
+      _taskService
+          .updateTaskDescription(widget.taskId, description)
+          .catchError((Object _) {});
     }
   }
 
@@ -717,10 +765,17 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
   }
 
   Widget _buildActivityLog(Task task) {
+    // Der Aktivitätsverlauf ist der unterste Block der Detailansicht. Ohne
+    // Reserve für die Systemleiste (Samsung-Navigationstasten/Gestenbalken)
+    // liegen diese auf dem letzten Eintrag. `viewPadding` statt `padding`,
+    // damit der Wert auch bei geöffneter Tastatur stabil bleibt; auf Desktop
+    // ist er 0, dort bleibt die Darstellung unverändert.
+    final systemBottom = MediaQuery.of(context).viewPadding.bottom;
+
     return Container(
       width: double.infinity,
       color: AppColors.appWhite,
-      padding: const EdgeInsets.all(16),
+      padding: EdgeInsets.fromLTRB(16, 16, 16, 16 + systemBottom),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [

@@ -162,6 +162,14 @@ async function sendPushToTokens(p, tokens, body, data) {
 // des Orbits AUSSER dem Auslöser. Darf die auslösende Aktion niemals scheitern lassen.
 async function emitOrbitEvent(p, { orbitId, actorUserId, actorName, type, sphereId, sphereTitle, orbitName, body }) {
   try {
+    // Einfache Listen ("Einkaufslisten-Modus") bleiben stumm. Sonst wuerde das
+    // Erfassen von 20 Positionen und das spaetere Abhaken im Laden 40 Meldungen
+    // beim Co-Piloten ausloesen und die Glocke unbrauchbar machen.
+    const listCheck = await p.request()
+      .input('orbitId', sql.NVarChar, orbitId)
+      .query('SELECT isShoppingList FROM TaskDomain WHERE id = @orbitId');
+    if (listCheck.recordset[0]?.isShoppingList) return;
+
     await p.request()
       .input('id',          sql.NVarChar,  uuidv4())
       .input('orbitId',     sql.NVarChar,  orbitId)
@@ -777,7 +785,7 @@ app.get('/domains', requireAuth, async (req, res) => {
 });
 
 app.post('/domains', requireAuth, async (req, res) => {
-  const { name, description, color } = req.body;
+  const { name, description, color, isShoppingList } = req.body;
   const id = uuidv4();
   try {
     const p = await getPool();
@@ -786,9 +794,10 @@ app.post('/domains', requireAuth, async (req, res) => {
       .input('name',        sql.NVarChar, name)
       .input('description', sql.NVarChar, description)
       .input('color',       sql.NVarChar, color || '#F5F5F5')
-      .query(`INSERT INTO TaskDomain (id, name, description, color)
+      .input('isShoppingList', sql.Bit,   isShoppingList ? 1 : 0)
+      .query(`INSERT INTO TaskDomain (id, name, description, color, isShoppingList)
               OUTPUT INSERTED.*
-              VALUES (@id, @name, @description, @color)`);
+              VALUES (@id, @name, @description, @color, @isShoppingList)`);
 
     // Ersteller wird automatisch Pilot
     await p.request()
@@ -1704,6 +1713,39 @@ async function runScheduler() {
         .input('id',  sql.NVarChar,  task.id)
         .input('now', sql.DateTime2, now)
         .query('UPDATE Task SET reminderEmailSentAt = @now WHERE id = @id');
+    }
+
+    // 3. Einfache Listen aufraeumen: gelandete Positionen werden 24 Stunden nach
+    //    dem Abhaken endgueltig geloescht, damit eine Einkaufsliste dauerhaft
+    //    klein bleibt. Innerhalb dieser Frist laesst sich eine Position aus dem
+    //    Archiv zurueckholen. Betrifft ausschliesslich Orbits mit
+    //    isShoppingList = 1 – normale Orbits behalten ihr Archiv unveraendert.
+    const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    const stale = await p.request()
+      .input('cutoff', sql.DateTime2, cutoff)
+      .query(`SELECT t.id
+              FROM Task t
+              JOIN TaskDomain d ON t.domainId = d.id
+              WHERE d.isShoppingList = 1
+                AND t.status = 'done'
+                AND t.completedAt IS NOT NULL
+                AND t.completedAt <= @cutoff`);
+
+    for (const row of stale.recordset) {
+      try {
+        // Verlaufseintraege zuerst – der Fremdschluessel verhindert sonst das Loeschen.
+        await p.request()
+          .input('taskId', sql.NVarChar, row.id)
+          .query('DELETE FROM TaskLogEntry WHERE taskId = @taskId');
+        await p.request()
+          .input('id', sql.NVarChar, row.id)
+          .query('DELETE FROM Task WHERE id = @id');
+      } catch (delErr) {
+        console.error(`Scheduler: cleanup failed for task ${row.id}:`, delErr.message);
+      }
+    }
+    if (stale.recordset.length > 0) {
+      console.log(`Scheduler: ${stale.recordset.length} erledigte Listenposition(en) geloescht`);
     }
   } catch (err) {
     console.error('Scheduler error:', err.message);
