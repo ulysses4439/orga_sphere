@@ -14,6 +14,35 @@ _(keine offenen Punkte – neue Meldungen hier eintragen)_
 
 ---
 
+## Nachtrag
+
+### 7. Eigene Rolle im Orbit ist sichtbar (kein Fehler, sondern Rückmeldung)
+**Gemeldet:** 08.08.2026 · **Umgesetzt in:** v1.0.14 · **Plattformen:** Desktop + App
+
+**Meldung:** In manchen Orbits fehlt der Knopf zum Einladen von Co-Piloten.
+
+**Befund: kein Fehler.** Der Knopf erscheint nur für Piloten — Co-Piloten dürfen niemanden
+einladen. In den betroffenen Orbits war Steven per Datenbank-Abfrage bestätigt Co-Pilot
+(er nutzt zwei Konten: privat und Arbeit). Auch der Einkaufslisten-Modus war unbeteiligt,
+die Teilnehmerleiste wird dort normal angezeigt.
+
+**Trotzdem geändert:** Die eigene Rolle war nur am *Fehlen* eines Knopfes erkennbar — eine
+wortlose Lücke, die sich nicht von einer Störung unterscheiden lässt. Statt der Lücke steht
+dort jetzt „Co-Pilot" mit einem Hinweis, dass nur der Pilot Co-Piloten verwalten darf.
+
+**Zwei Härtungen aus der Fehlersuche mitgenommen:**
+- Die Pilot-Erkennung lief über einen zeichengenauen E-Mail-Vergleich, obwohl jedes Mitglied
+  eine stabile `userId` mitliefert. Jetzt über die ID, E-Mail nur noch als Rückfallebene für
+  Eingeladene ohne Konto (dann ohne Rücksicht auf Groß-/Kleinschreibung).
+- **Echter latenter Fehler:** `PATCH /auth/profile` änderte bei einer E-Mail-Umstellung nur
+  `AppUser` — die `OrbitMember`-Zeilen behielten die alte Adresse. Da der Erinnerungs-Scheduler
+  seine Mails an `OrbitMember.email` schickt, wären Erinnerungen still an die alte Adresse
+  gegangen. Das Backend zieht die Mitgliedschaften jetzt mit;
+  [v11_orbitmember_email_sync.sql](backend/db/v11_orbitmember_email_sync.sql) räumt Altbestände
+  auf (Stand 08.08.2026 geprüft: keine Abweichungen vorhanden).
+
+---
+
 ## Erledigt
 
 ### 1. Rotes Glocken-Badge verschwindet nicht beim direkten Öffnen einer Sphere

@@ -86,8 +86,32 @@ class _OrbitMembersBarState extends State<OrbitMembersBar> {
     });
   }
 
-  bool _isPilot(List<OrbitMember> members) =>
-      members.any((m) => m.email == AuthService.email && m.isPilot);
+  /// Der eigene Eintrag in der Teilnehmerliste – oder `null`, wenn er sich
+  /// nicht zuordnen laesst. Daraus ergibt sich die eigene Rolle im Orbit.
+  ///
+  /// Primaer ueber die Nutzer-ID, die ist stabil. Die E-Mail dient nur als
+  /// Rueckfallebene fuer Eintraege ohne userId – etwa eingeladene Personen, die
+  /// ihr Konto noch nicht angelegt haben. Dann zeichenunabhaengig, damit
+  /// Gross-/Kleinschreibung nichts kaputt macht. Ein reiner E-Mail-Vergleich
+  /// waere unzuverlaessig: Die Adresse laesst sich im Profil aendern.
+  OrbitMember? _findMe(List<OrbitMember> members) {
+    final myId = AuthService.userId;
+    if (myId != null) {
+      for (final m in members) {
+        if (m.userId == myId) return m;
+      }
+    }
+    final myMails = <String>{
+      if (AuthService.email != null) AuthService.email!.trim().toLowerCase(),
+      if (AuthService.tokenEmail != null)
+        AuthService.tokenEmail!.trim().toLowerCase(),
+    };
+    if (myMails.isEmpty) return null;
+    for (final m in members) {
+      if (myMails.contains(m.email.trim().toLowerCase())) return m;
+    }
+    return null;
+  }
 
   Future<void> _manageMember(OrbitMember member) async {
     final action = await showDialog<String>(
@@ -158,7 +182,8 @@ class _OrbitMembersBarState extends State<OrbitMembersBar> {
           );
         }
         final members = snapshot.data ?? [];
-        final isPilot = _isPilot(members);
+        final me = _findMe(members);
+        final isPilot = me?.isPilot ?? false;
 
         return Container(
           color: Colors.black,
@@ -227,6 +252,26 @@ class _OrbitMembersBarState extends State<OrbitMembersBar> {
                     await widget.onInvite();
                     _reload();
                   },
+                )
+              // Statt einer wortlosen Luecke: die eigene Rolle benennen. Sonst
+              // ist am fehlenden Einladen-Knopf nicht zu erkennen, ob man keine
+              // Rechte hat oder ob etwas nicht funktioniert.
+              else if (me != null)
+                Tooltip(
+                  message: 'Du bist Co-Pilot dieses Orbits.\n'
+                      'Nur der Pilot kann Co-Piloten einladen und verwalten.',
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: const [
+                      Icon(Icons.badge_outlined,
+                          color: Colors.white38, size: 14),
+                      SizedBox(width: 4),
+                      Text(
+                        'Co-Pilot',
+                        style: TextStyle(color: Colors.white54, fontSize: 11),
+                      ),
+                    ],
+                  ),
                 ),
             ],
           ),

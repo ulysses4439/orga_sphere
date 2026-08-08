@@ -37,6 +37,38 @@ class AuthService {
   static String? get email => _email;
   static String? get displayName => _displayName;
 
+  /// Eigene Nutzer-ID, gelesen aus dem JWT.
+  ///
+  /// Die ID ist der einzige stabile Bezug auf den eigenen Account: Die E-Mail
+  /// lässt sich im Profil ändern, wobei bestehende `OrbitMember`-Zeilen ihre
+  /// alte Adresse behalten. Ein Vergleich über die E-Mail hielte einen Piloten
+  /// dann faelschlich fuer einen Co-Piloten.
+  ///
+  /// Wird aus dem Token gelesen statt zusaetzlich gespeichert, damit auch
+  /// Sitzungen funktionieren, die vor dieser Aenderung angelegt wurden.
+  static String? get userId => _claimFromToken('userId');
+
+  /// E-Mail aus dem Token – kann von [email] abweichen, wenn die Adresse in
+  /// einer anderen Sitzung geaendert wurde.
+  static String? get tokenEmail => _claimFromToken('email');
+
+  static String? _claimFromToken(String claim) {
+    final token = _token;
+    if (token == null) return null;
+    try {
+      final parts = token.split('.');
+      if (parts.length != 3) return null;
+      // base64url ohne Padding – normalize() ergaenzt die fehlenden '='.
+      final payload = jsonDecode(
+        utf8.decode(base64Url.decode(base64Url.normalize(parts[1]))),
+      ) as Map<String, dynamic>;
+      final value = payload[claim];
+      return value is String ? value : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
   static Map<String, String> get authHeaders => {
         'Content-Type': 'application/json',
         if (_token != null) 'Authorization': 'Bearer $_token',

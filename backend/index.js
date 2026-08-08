@@ -439,6 +439,15 @@ app.patch('/auth/profile', requireAuth, async (req, res) => {
         .input('email', sql.NVarChar, emailLower)
         .input('userId', sql.NVarChar, userId)
         .query('UPDATE AppUser SET email = @email WHERE id = @userId');
+
+      // Mitgliedschaften mitziehen. Sonst behalten die OrbitMember-Zeilen die
+      // alte Adresse, und daran haengt mehr als nur eine Anzeige: Der
+      // Erinnerungs-Scheduler verschickt seine Mails an OrbitMember.email,
+      // wuerde also weiter die alte Adresse anschreiben.
+      await p.request()
+        .input('email', sql.NVarChar, emailLower)
+        .input('userId', sql.NVarChar, userId)
+        .query('UPDATE OrbitMember SET email = @email WHERE userId = @userId');
     }
     if (displayName !== undefined) {
       const nameValue = displayName?.trim() || null;
