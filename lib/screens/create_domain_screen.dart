@@ -2,9 +2,13 @@ import 'package:flutter/material.dart';
 import '../services/task_service.dart';
 
 const _kPaletteColors = [
+  // Pastelltöne
   '#FFC0CB', '#FFB6C1', '#FFDAB9', '#FFE4B5', '#FFFACD',
   '#C1FFC1', '#98FB98', '#E0FFFF', '#AFEEEE', '#B0E0E6',
   '#E6E6FA', '#DDA0DD', '#F5F5DC', '#D3D3D3', '#F5F5F5',
+  // Kräftige Töne. Die Sphere-Kacheln stellen ihre Schrift automatisch auf
+  // Weiß um, sobald der Orbit dunkel genug ist – siehe TaskListItem.
+  '#E53935', '#FB8C00', '#43A047', '#1E88E5', '#8E24AA',
 ];
 
 class CreateDomainScreen extends StatefulWidget {

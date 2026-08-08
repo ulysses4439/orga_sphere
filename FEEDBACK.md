@@ -41,6 +41,24 @@ dort jetzt „Co-Pilot" mit einem Hinweis, dass nur der Pilot Co-Piloten verwalt
   [v11_orbitmember_email_sync.sql](backend/db/v11_orbitmember_email_sync.sql) räumt Altbestände
   auf (Stand 08.08.2026 geprüft: keine Abweichungen vorhanden).
 
+### 8. Kräftige Farben zur Auswahl beim Orbit anlegen
+**Gewünscht:** 08.08.2026 · **Umgesetzt in:** v1.0.14 · **Plattformen:** Desktop + App
+
+Vierte Reihe in der Farbauswahl mit kräftigen Tönen (Rot, Orange, Grün, Blau, Violett)
+zusätzlich zu den bisherigen Pastelltönen.
+
+**Nicht nur Farben hinzugefügt:** Die Orbit-Farbe ist der Hintergrund der Sphere-Kacheln, und
+die Schrift darauf war fest schwarz. Kräftige Farben hätten die Kacheln unlesbar gemacht.
+[TaskListItem](lib/widgets/task_list_item.dart) wählt die Schriftfarbe jetzt selbst — es
+vergleicht die WCAG-Kontrastwerte gegen Weiß und gegen Schwarz und nimmt die besser lesbare.
+
+Ein fester Helligkeits-Schwellwert wäre hier falsch gewesen: Orange (#FB8C00) wirkt dunkel,
+erreicht mit weißer Schrift aber nur 2,4:1 — mit schwarzer dagegen 8,8:1. Violett (#8E24AA)
+liegt umgekehrt. Von den fünf neuen Farben bekommt daher nur Violett weiße Schrift.
+
+**Geprüft:** Alle 20 Palettenfarben erreichen mit der gewählten Schriftfarbe mindestens
+4,5:1 (WCAG AA); der schlechteste Wert ist Rot mit 4,97:1.
+
 ---
 
 ## Erledigt
