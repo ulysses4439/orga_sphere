@@ -59,6 +59,122 @@ liegt umgekehrt. Von den fünf neuen Farben bekommt daher nur Violett weiße Sch
 **Geprüft:** Alle 20 Palettenfarben erreichen mit der gewählten Schriftfarbe mindestens
 4,5:1 (WCAG AA); der schlechteste Wert ist Rot mit 4,97:1.
 
+### 9. Balken im Eingabefeld beim Bearbeiten einer Listenposition
+**Gemeldet:** 08.08.2026 · **Erledigt in:** v1.0.15 · **Plattformen:** Desktop + App
+
+**Problem:** Im Dialog „Position bearbeiten" lag ein dicker blauer Balken quer über dem
+Eingabefeld, darunter ein grauer Block. Der Dialog war praktisch unbenutzbar.
+
+**Ursache — Fehler aus Punkt 5:** In `showSimpleListItemDialog` stand ein `Spacer()` zwischen
+den Schaltflächen, um „Löschen" nach links zu rücken. Die Aktionsleiste eines `AlertDialog`
+ist aber ein `OverflowBar` und damit **kein Flex-Widget**; ein `Spacer` benötigt zwingend
+eines. Dadurch wurde das Textfeld auf Nullhöhe zusammengedrückt — der „Balken" waren die
+zusammenfallenden Rahmenlinien des Eingabefelds.
+
+**Lösung:** `actionsAlignment: MainAxisAlignment.spaceBetween` statt `Spacer`; Abbrechen und
+OK als Gruppe rechts. Reicht der Platz nicht, bricht die Leiste jetzt sauber um.
+
+**Zweiter Fehler in derselben Funktion, mit erledigt:** Löschen und Speichern gaben beide
+`true` zurück. Nach dem Löschen lief deshalb zusätzlich ein Titel-Update auf die bereits
+gelöschte Sphere — der Fehler wurde stillschweigend verschluckt. Der Dialog unterscheidet die
+Fälle jetzt.
+
+**Warum es nicht auffiel:** `flutter analyze` erkennt so etwas nicht — es ist ein reines
+Laufzeit-Layoutproblem. Der Dialog wurde vor der Auslieferung nie geöffnet.
+
+### 10. Meldungen in der Glocke einzeln ausblenden
+**Gewünscht:** 08.08.2026 · **Umgesetzt in:** v1.0.15 · **Plattformen:** Desktop + App
+
+**Ausgangsfrage war entscheidend:** Liegen die Meldungen zentral oder lokal? Antwort:
+`OrbitEvent` enthält **eine Zeile pro Ereignis, geteilt von allen Mitgliedern des Orbits**.
+Ein echtes `DELETE` hätte die Meldung bei allen entfernt. Lokal liegt bisher nur der
+Lesestatus — und zwar pro Gerät, nicht pro Konto.
+
+**Lösung:** Ausblenden statt löschen. Neue Tabelle `OrbitEventDismissed (eventId, userId)`
+hält je Nutzer fest, was er weggeräumt hat; `GET /events` filtert per `NOT EXISTS`. Die
+Ereigniszeile bleibt unangetastet, andere Mitglieder sehen ihre Meldung unverändert.
+
+**Serverseitig statt im Gerätespeicher**, damit das Aufräumen am Desktop auch am Handy gilt.
+
+**Bedienung:** In der App nach rechts wischen, auf dem Desktop ein kleines X. Zusätzlich
+oben in der Liste „Alle ausblenden". Der Server wird jeweils zuerst gefragt — schlägt es
+fehl, kommt der Eintrag zurück, statt nur optisch zu verschwinden.
+
+**Erfordert Migration** [v12_event_dismissed.sql](backend/db/v12_event_dismissed.sql).
+Diese muss **vor** dem Backend-Deploy laufen: Fehlt die Tabelle, scheitert `GET /events` und
+es kommen gar keine Meldungen mehr an.
+
+**Offen geblieben:** Der Lesestatus (rotes Badge) liegt weiterhin pro Gerät. Am Desktop
+gelesen heißt am Handy noch ungelesen. Ließe sich mit derselben Technik auf das Konto
+umstellen — bisher nicht beauftragt.
+
+### 11. Fälligkeitsdatum springt einen Tag zurück
+**Gemeldet:** 09.08.2026 · **Erledigt in:** v1.0.15 · **Plattformen:** Desktop + App
+
+**Problem:** Nach dem Setzen einer Erinnerung stand als Fälligkeitsdatum plötzlich der
+Vortag (09.08. → 08.08.), reproduzierbar.
+
+**Ursache — zwei verschiedene Schreibweisen für dasselbe Feld:**
+
+| Weg | Übertragen wurde |
+|---|---|
+| `createTask` (Anlegen) | `2026-08-09T00:00:00.000` — ohne Zeitzone, korrekt |
+| `updateTaskSchedule` (Ändern) | `2026-08-08T22:00:00.000Z` — **per `toUtc()` verschoben** |
+
+Start- und Fälligkeitsdatum bezeichnen einen **Tag**, keinen Zeitpunkt. Das `toUtc()` machte
+aus Mitternacht deutscher Sommerzeit 22:00 des Vortages. Da die Anzeige die Werte ohne
+Rückrechnung formatiert, stand dort der Vortag. Betroffen war nur das Feld, das zuletzt über
+die Detailansicht geschrieben wurde — deshalb sprang das Fälligkeitsdatum, das Startdatum
+aber nicht.
+
+**Warum die Erinnerung als Auslöser wirkte:** Direkt nach dem Ändern zeigt die App noch ihren
+eigenen, korrekten Wert. Erst der nächste Abgleich mit dem Server (spätestens der
+30-Sekunden-Takt, oder eben ausgelöst durch das Setzen der Erinnerung) holt den verschobenen
+Wert. Die Erinnerung selbst fasst das Datum nicht an.
+
+**Lösung:** `updateTaskSchedule` überträgt Datumsangaben jetzt ohne Zeitzonenumrechnung und
+auf Mitternacht normalisiert — genau wie `createTask`. `reminderAt` bleibt bewusst UTC, das
+ist ein echter Zeitpunkt.
+
+**Altbestand:** [v13_fix_shifted_dates.sql](backend/db/v13_fix_shifted_dates.sql) rückt bereits
+verschobene Werte gerade (erst Prüfabfrage, dann Korrektur, dann Kontrolle).
+
+**Zur Randbedingung „nur wenn Start = Fällig":** Vermutlich ein Wahrnehmungseffekt — die
+Verschiebung trat immer auf, fiel aber nur dann sofort ins Auge, weil aus „heute fällig"
+ein **rot markiertes „überfällig"** wurde. Bei einem Datum in der Zukunft (11.08. → 10.08.)
+bleibt die Kachel unauffällig. Bitte nach dem Update gegenprüfen.
+
+**Datenkorrektur ausgeführt 09.08.2026.** Die Prüfabfrage zeigte 1 verschobenes `dueDate`
+(exakt 22:00) und 49 `startDate` mit Erfassungszeitpunkten aus der Schnellerfassung. Die
+erste Fassung des Skripts hätte 34 davon fälschlich auf den Folgetag geschoben — sie wurde
+vor der Ausführung auf zwei getrennte Fälle umgestellt: exakt 22:00/23:00 werden angehoben,
+alles andere wird nur auf Mitternacht abgeschnitten.
+
+### 12. Windows: App fehlt im Startmenü eines zweiten Profils
+**Gemeldet:** 09.08.2026 · **Erledigt in:** v1.0.15 · **Plattform:** Windows
+
+**Problem:** Auf einem Rechner mit zwei Windows-Profilen (privat + Verein) ließ sich die App
+im zweiten Profil nicht nutzen. Die Installation meldete Erfolg, das Startmenü blieb leer.
+
+**Ursache:** `Add-AppxPackage` installiert eine MSIX-App **immer nur für den ausführenden
+Benutzer**. Der alte Installer forderte aber ganz zu Beginn Admin-Rechte für das **gesamte**
+Skript an. Im Vereinsprofil (kein Admin) musste dafür die private Admin-Kennung eingegeben
+werden — damit lief auch die App-Installation als *privater* Nutzer. Die App wurde also ein
+zweites Mal ins private Profil installiert, nicht ins Vereinsprofil.
+
+**Lösung:** Der Installer eleviert nicht mehr pauschal. Admin-Rechte werden nur noch für den
+Zertifikats-Import geholt — und nur, wenn das Zertifikat auf dem Rechner überhaupt fehlt
+(einmalig pro Rechner, nicht pro Profil). `Add-AppxPackage` läuft bewusst im normalen
+Benutzerkontext. Zum Schluss prüft das Skript, ob das Paket im aktuellen Profil wirklich
+auffindbar ist, statt Erfolg nur zu melden.
+
+**Zu den getrennten Kennungen:** Funktioniert bereits ohne Änderung. Die App-Daten liegen unter
+`%LOCALAPPDATA%\Packages\CoatesEventSystems.OrgaSphere_jaf9vzakqgcjp` und damit pro
+Windows-Profil getrennt — jedes Profil kann sich mit einem eigenen OrgaSphere-Konto anmelden.
+
+**Paketinhalt geändert:** Ab v1.0.15 enthält das ZIP **vier** Dateien; `install_orgasphere.ps1`
+gehört jetzt zwingend dazu, die `.bat` ruft sie nur noch auf.
+
 ---
 
 ## Erledigt

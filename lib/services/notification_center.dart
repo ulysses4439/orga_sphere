@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import '../models/models.dart';
+import 'api_service.dart';
 
 /// Hält die letzten Team-Ereignisse für die In-App-Glocke und verwaltet den
 /// Ungelesen-Zähler. Der „gelesen bis"-Zeitpunkt wird lokal persistiert, sodass
@@ -108,6 +109,43 @@ class NotificationCenter extends ChangeNotifier {
     _readIds.clear();
     await _persistReadIds();
     notifyListeners();
+  }
+
+  /// Blendet eine Meldung dauerhaft aus – nur für den eigenen Account.
+  ///
+  /// Der Server merkt sich das kontobezogen, nicht geräteweise: Wer am Desktop
+  /// aufräumt, ist die Meldung auch am Handy los. Die Ereigniszeile selbst
+  /// bleibt bestehen, andere Mitglieder des Orbits sehen sie unverändert.
+  ///
+  /// Die Anzeige wird sofort aktualisiert; scheitert der Server, kommt der
+  /// Eintrag beim nächsten Abgleich zurück.
+  Future<void> dismiss(OrbitEvent event) async {
+    final index = _events.indexWhere((e) => e.id == event.id);
+    if (index == -1) return;
+    _events.removeAt(index);
+    notifyListeners();
+    try {
+      await ApiService.dismissEvent(event.id);
+    } catch (_) {
+      _events.insert(index, event);
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  /// Blendet alle derzeit angezeigten Meldungen aus.
+  Future<void> dismissAll() async {
+    if (_events.isEmpty) return;
+    final backup = List<OrbitEvent>.from(_events);
+    _events.clear();
+    notifyListeners();
+    try {
+      await ApiService.dismissAllEvents();
+    } catch (_) {
+      _events.addAll(backup);
+      notifyListeners();
+      rethrow;
+    }
   }
 
   /// Beim Logout: Liste leeren (gelesen-Marke bleibt erhalten).

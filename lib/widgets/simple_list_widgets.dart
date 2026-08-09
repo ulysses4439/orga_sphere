@@ -111,7 +111,12 @@ class _SimpleListQuickAddState extends State<SimpleListQuickAdd> {
 /// Gibt `true` zurück, wenn sich etwas geändert hat.
 Future<bool> showSimpleListItemDialog(BuildContext context, Task task) async {
   final controller = TextEditingController(text: task.title);
-  final result = await showDialog<bool>(
+  final messenger = ScaffoldMessenger.of(context);
+
+  // Rueckgabe unterscheidet Speichern und Loeschen. Ein blosses `true` fuer
+  // beides hatte zur Folge, dass nach dem Loeschen zusaetzlich noch ein
+  // Titel-Update auf die bereits geloeschte Sphere lief.
+  final action = await showDialog<String>(
     context: context,
     builder: (ctx) => AlertDialog(
       title: const Text('Position bearbeiten'),
@@ -120,45 +125,50 @@ Future<bool> showSimpleListItemDialog(BuildContext context, Task task) async {
         autofocus: true,
         textCapitalization: TextCapitalization.sentences,
         decoration: const InputDecoration(border: OutlineInputBorder()),
-        onSubmitted: (_) => Navigator.pop(ctx, true),
+        onSubmitted: (_) => Navigator.pop(ctx, 'save'),
       ),
+      // Loeschen nach links, Abbrechen/OK nach rechts. KEIN Spacer dazwischen:
+      // Die Aktionsleiste ist ein OverflowBar und damit kein Flex-Widget – ein
+      // Spacer zerlegt dort das Layout und quetscht das Eingabefeld platt.
+      actionsAlignment: MainAxisAlignment.spaceBetween,
       actions: [
         TextButton.icon(
-          onPressed: () async {
-            final messenger = ScaffoldMessenger.of(ctx);
-            Navigator.pop(ctx, true);
-            try {
-              await TaskService().deleteTask(task.id);
-            } catch (e) {
-              messenger.showSnackBar(SnackBar(content: Text('Fehler: $e')));
-            }
-          },
-          icon: const Icon(Icons.delete_outline, color: Colors.red),
+          onPressed: () => Navigator.pop(ctx, 'delete'),
+          icon: const Icon(Icons.delete_outline, color: Colors.red, size: 20),
           label: const Text('Löschen', style: TextStyle(color: Colors.red)),
         ),
-        const Spacer(),
-        TextButton(
-          onPressed: () => Navigator.pop(ctx, false),
-          child: const Text('Abbrechen'),
-        ),
-        FilledButton(
-          onPressed: () => Navigator.pop(ctx, true),
-          child: const Text('OK'),
+        Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, 'cancel'),
+              child: const Text('Abbrechen'),
+            ),
+            const SizedBox(width: 8),
+            FilledButton(
+              onPressed: () => Navigator.pop(ctx, 'save'),
+              child: const Text('OK'),
+            ),
+          ],
         ),
       ],
     ),
   );
 
-  if (result == true) {
-    final newTitle = controller.text.trim();
-    if (newTitle.isNotEmpty && newTitle != task.title) {
-      try {
-        await TaskService().updateTaskTitle(task.id, newTitle);
-      } catch (_) {
-        // Anzeige korrigiert sich beim nächsten Abgleich mit dem Backend.
-      }
-    }
-  }
+  final newTitle = controller.text.trim();
   controller.dispose();
-  return result == true;
+
+  try {
+    if (action == 'delete') {
+      await TaskService().deleteTask(task.id);
+      return true;
+    }
+    if (action == 'save' && newTitle.isNotEmpty && newTitle != task.title) {
+      await TaskService().updateTaskTitle(task.id, newTitle);
+      return true;
+    }
+  } catch (e) {
+    messenger.showSnackBar(SnackBar(content: Text('Fehler: $e')));
+  }
+  return false;
 }

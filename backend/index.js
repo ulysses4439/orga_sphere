@@ -1643,14 +1643,66 @@ app.get('/events', requireAuth, async (req, res) => {
     }
 
     const result = await request.query(
-      `SELECT TOP 50 id, orbitId, actorUserId, actorName, type, sphereId, sphereTitle, orbitName, body, createdAt
-       FROM OrbitEvent
-       WHERE orbitId IN (${placeholders})
-         AND (actorUserId IS NULL OR actorUserId <> @actor)
-         ${sinceClause}
-       ORDER BY createdAt DESC`
+      `SELECT TOP 50 e.id, e.orbitId, e.actorUserId, e.actorName, e.type,
+              e.sphereId, e.sphereTitle, e.orbitName, e.body, e.createdAt
+       FROM OrbitEvent e
+       WHERE e.orbitId IN (${placeholders})
+         AND (e.actorUserId IS NULL OR e.actorUserId <> @actor)
+         AND NOT EXISTS (
+           SELECT 1 FROM OrbitEventDismissed d
+           WHERE d.eventId = e.id AND d.userId = @actor
+         )
+         ${sinceClause.replace('createdAt', 'e.createdAt')}
+       ORDER BY e.createdAt DESC`
     );
     res.json(result.recordset);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Eine Meldung fuer den eigenen Account ausblenden. Die OrbitEvent-Zeile
+// bleibt bestehen - andere Mitglieder des Orbits sehen ihre Meldung weiter.
+app.delete('/events/:id', requireAuth, async (req, res) => {
+  try {
+    const p = await getPool();
+    // Mehrfaches Ausblenden darf nicht am Primaerschluessel scheitern.
+    await p.request()
+      .input('eventId', sql.NVarChar, req.params.id)
+      .input('userId',  sql.NVarChar, req.user.userId)
+      .query(`IF NOT EXISTS (SELECT 1 FROM OrbitEventDismissed
+                             WHERE eventId = @eventId AND userId = @userId)
+              INSERT INTO OrbitEventDismissed (eventId, userId)
+              VALUES (@eventId, @userId)`);
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Alle derzeit sichtbaren Meldungen auf einmal ausblenden.
+app.delete('/events', requireAuth, async (req, res) => {
+  try {
+    const p = await getPool();
+    const orbitIds = await getUserOrbitIds(p, req.user.userId);
+    if (orbitIds.length === 0) return res.json({ success: true, dismissed: 0 });
+
+    const placeholders = orbitIds.map((_, i) => `@oid${i}`).join(',');
+    const request = p.request().input('userId', sql.NVarChar, req.user.userId);
+    orbitIds.forEach((id, i) => request.input(`oid${i}`, sql.NVarChar, id));
+
+    const result = await request.query(
+      `INSERT INTO OrbitEventDismissed (eventId, userId)
+       SELECT e.id, @userId
+       FROM OrbitEvent e
+       WHERE e.orbitId IN (${placeholders})
+         AND (e.actorUserId IS NULL OR e.actorUserId <> @userId)
+         AND NOT EXISTS (
+           SELECT 1 FROM OrbitEventDismissed d
+           WHERE d.eventId = e.id AND d.userId = @userId
+         )`
+    );
+    res.json({ success: true, dismissed: result.rowsAffected[0] });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

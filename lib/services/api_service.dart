@@ -180,8 +180,10 @@ class ApiService {
         'domainId': domainId,
         'title': title,
         'description': description,
-        'startDate': startDate.toIso8601String(),
-        'dueDate': dueDate?.toIso8601String(),
+        // Auf Mitternacht normalisiert: Sonst landet beim Anlegen die
+        // Uhrzeit des Erfassungsmoments in der Datenbank.
+        'startDate': _dateOnly(startDate),
+        'dueDate': dueDate == null ? null : _dateOnly(dueDate),
         'recurrenceFrequency': recurrenceFrequency,
         'recurrenceInterval': recurrenceInterval,
       }),
@@ -262,6 +264,16 @@ class ApiService {
     _checkStatus(response);
   }
 
+  /// Kalenderdatum ohne Uhrzeit und ohne Zeitzonenangabe, z. B.
+  /// `2026-08-09T00:00:00.000`. Start- und Fälligkeitsdatum bezeichnen einen
+  /// Tag, keinen Zeitpunkt – eine Umrechnung in UTC würde sie je nach
+  /// Sommer-/Winterzeit auf den Vortag verschieben.
+  ///
+  /// Nicht zu verwechseln mit `reminderAt`: Das ist ein echter Zeitpunkt und
+  /// wird bewusst als UTC übertragen.
+  static String _dateOnly(DateTime d) =>
+      DateTime(d.year, d.month, d.day).toIso8601String();
+
   static Future<void> updateTaskSchedule(
       String taskId, {
       DateTime? startDate,
@@ -271,11 +283,18 @@ class ApiService {
       int? recurrenceInterval,
   }) async {
     final body = <String, dynamic>{};
-    if (startDate != null) body['startDate'] = startDate.toUtc().toIso8601String();
+    // Start- und Fälligkeitsdatum sind reine Kalenderdaten ohne Uhrzeit und
+    // werden deshalb OHNE Zeitzonenumrechnung übertragen – genau wie beim
+    // Anlegen in [createTask].
+    //
+    // Ein `.toUtc()` hier hat Mitternacht deutscher Sommerzeit in 22:00 des
+    // Vortages verwandelt, wodurch das Datum nach dem nächsten Abgleich mit
+    // dem Server einen Tag zurücksprang.
+    if (startDate != null) body['startDate'] = _dateOnly(startDate);
     if (clearDueDate) {
       body['dueDate'] = null;
     } else if (dueDate != null) {
-      body['dueDate'] = dueDate.toUtc().toIso8601String();
+      body['dueDate'] = _dateOnly(dueDate);
     }
     if (recurrenceFrequency != null) body['recurrenceFrequency'] = recurrenceFrequency;
     if (recurrenceInterval != null) body['recurrenceInterval'] = recurrenceInterval;
@@ -356,6 +375,25 @@ class ApiService {
     return data
         .map((j) => OrbitEvent.fromJson(j as Map<String, dynamic>))
         .toList();
+  }
+
+  /// Blendet eine Meldung für den eigenen Account aus. Das Ereignis selbst
+  /// bleibt bestehen – andere Mitglieder des Orbits sehen es weiterhin.
+  static Future<void> dismissEvent(String eventId) async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/events/$eventId'),
+      headers: _headers,
+    );
+    _checkStatus(response);
+  }
+
+  /// Blendet alle derzeit sichtbaren Meldungen auf einmal aus.
+  static Future<void> dismissAllEvents() async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/events'),
+      headers: _headers,
+    );
+    _checkStatus(response);
   }
 }
 

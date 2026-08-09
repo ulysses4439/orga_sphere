@@ -39,7 +39,7 @@ class _NotificationBellState extends State<NotificationBell> {
       await showModalBottomSheet<void>(
         context: context,
         showDragHandle: true,
-        builder: (_) => _NotificationList(events: _center.events),
+        builder: (_) => _NotificationList(),
       );
     } else {
       await showDialog<void>(
@@ -55,7 +55,7 @@ class _NotificationBellState extends State<NotificationBell> {
               child: SizedBox(
                 width: 380,
                 height: 480,
-                child: _NotificationList(events: _center.events),
+                child: _NotificationList(),
               ),
             ),
           ),
@@ -106,9 +106,57 @@ class _NotificationBellState extends State<NotificationBell> {
   }
 }
 
-class _NotificationList extends StatelessWidget {
-  final List<OrbitEvent> events;
-  const _NotificationList({required this.events});
+class _NotificationList extends StatefulWidget {
+  const _NotificationList();
+
+  @override
+  State<_NotificationList> createState() => _NotificationListState();
+}
+
+class _NotificationListState extends State<_NotificationList> {
+  final NotificationCenter _center = NotificationCenter();
+
+  @override
+  void initState() {
+    super.initState();
+    // Ohne Listener bliebe eine ausgeblendete Meldung stehen, bis der Dialog
+    // geschlossen und neu geöffnet wird.
+    _center.addListener(_onChanged);
+  }
+
+  @override
+  void dispose() {
+    _center.removeListener(_onChanged);
+    super.dispose();
+  }
+
+  void _onChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<bool> _dismiss(OrbitEvent event) async {
+    try {
+      await _center.dismiss(event);
+      return true;
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Fehler: $e')));
+      }
+      return false;
+    }
+  }
+
+  Future<void> _dismissAll() async {
+    try {
+      await _center.dismissAll();
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Fehler: $e')));
+      }
+    }
+  }
 
   IconData _iconFor(String type) {
     switch (type) {
@@ -132,15 +180,35 @@ class _NotificationList extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final events = _center.events;
+    // Auf dem Handy wird gewischt, auf dem Desktop gibt es ein kleines X –
+    // Wischgesten sind mit der Maus unüblich.
+    final isMobile = MediaQuery.of(context).size.width < 800;
+
     return Column(
       mainAxisSize: MainAxisSize.min,
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 8),
-          child: Text(
-            'Team-Aktivitäten',
-            style: Theme.of(context).textTheme.titleMedium,
+          padding: const EdgeInsets.fromLTRB(16, 12, 8, 8),
+          child: Row(
+            children: [
+              Expanded(
+                child: Text(
+                  'Team-Aktivitäten',
+                  style: Theme.of(context).textTheme.titleMedium,
+                ),
+              ),
+              if (events.isNotEmpty)
+                TextButton(
+                  onPressed: _dismissAll,
+                  style: TextButton.styleFrom(
+                    padding: const EdgeInsets.symmetric(horizontal: 8),
+                    textStyle: const TextStyle(fontSize: 12),
+                  ),
+                  child: const Text('Alle ausblenden'),
+                ),
+            ],
           ),
         ),
         const Divider(height: 1),
@@ -156,7 +224,7 @@ class _NotificationList extends StatelessWidget {
                   separatorBuilder: (_, _) => const Divider(height: 1),
                   itemBuilder: (_, i) {
                     final e = events[i];
-                    return ListTile(
+                    final tile = ListTile(
                       leading: Icon(_iconFor(e.type), color: _colorFor(e.type)),
                       title: Text(e.body),
                       subtitle: Text(
@@ -166,6 +234,14 @@ class _NotificationList extends StatelessWidget {
                             .bodySmall
                             ?.copyWith(color: Colors.grey[600]),
                       ),
+                      trailing: isMobile
+                          ? null
+                          : IconButton(
+                              icon: Icon(Icons.close,
+                                  size: 18, color: Colors.grey[600]),
+                              tooltip: 'Meldung ausblenden',
+                              onPressed: () => _dismiss(e),
+                            ),
                       onTap: e.sphereId == null
                           ? null
                           : () {
@@ -175,6 +251,24 @@ class _NotificationList extends StatelessWidget {
                                 arguments: e.sphereId,
                               );
                             },
+                    );
+
+                    if (!isMobile) return tile;
+
+                    return Dismissible(
+                      key: ValueKey(e.id),
+                      direction: DismissDirection.startToEnd,
+                      // Server zuerst fragen: Schlägt es fehl, bleibt der
+                      // Eintrag stehen, statt nur optisch zu verschwinden.
+                      confirmDismiss: (_) => _dismiss(e),
+                      background: Container(
+                        color: Colors.red.shade700,
+                        alignment: Alignment.centerLeft,
+                        padding: const EdgeInsets.only(left: 20),
+                        child: const Icon(Icons.visibility_off_outlined,
+                            color: Colors.white),
+                      ),
+                      child: tile,
                     );
                   },
                 ),
