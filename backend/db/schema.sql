@@ -1,45 +1,131 @@
--- TaskDomain table
+-- ============================================================================
+-- OrgaSphere - vollstaendiges Datenbankschema (Azure SQL, DB "orgaSphereDb")
+--
+-- Stand: App v1.0.15 / Migrationsstand v13.
+-- Diese Datei ist die EINZIGE Beschreibung des Schemas: Alle frueheren
+-- Einzelmigrationen (migrate_v2 ... v13) sind hier eingearbeitet und wurden
+-- danach entfernt. Sie baut eine leere Datenbank komplett neu auf.
+--
+-- Reihenfolge der CREATE-Statements ist wegen der Fremdschluessel bindend.
+--
+-- ARBEITSWEISE bei kuenftigen Schema-Aenderungen:
+--   1. Migrations-Skript (ALTER TABLE ...) im Azure-Portal ausfuehren:
+--      SQL-DB orgaSphereDb -> Query-Editor -> Run
+--   2. Die Aenderung SOFORT hier eintragen, damit diese Datei nicht veraltet.
+-- ============================================================================
+
+
+-- ----------------------------------------------------------------------------
+-- TaskDomain - ein "Orbit"
+-- isShoppingList = 1: Orbit verhaelt sich wie eine Einkaufsliste (Positionen
+--   nur mit Titel, ein Klick landet direkt, gelandete Eintraege werden nach
+--   24 h geloescht, keine Team-Benachrichtigungen).
+-- ----------------------------------------------------------------------------
 CREATE TABLE TaskDomain (
-    id NVARCHAR(100) PRIMARY KEY,
-    name NVARCHAR(100) NOT NULL,
-    description NVARCHAR(500),
-    color NVARCHAR(7) NOT NULL DEFAULT '#F5F5F5',
-    notificationEmails NVARCHAR(1000)
+    id             NVARCHAR(100) NOT NULL PRIMARY KEY,
+    name           NVARCHAR(100) NOT NULL,
+    description    NVARCHAR(500) NULL,
+    color          NVARCHAR(7)   NOT NULL DEFAULT '#F5F5F5',
+    isShoppingList BIT           NOT NULL DEFAULT 0
 );
 
--- Task table (unified: replaces TaskTemplate + TaskInstance)
--- Each row is one "Kapsel" (capsule). Recurring tasks form a chain via previousTaskId.
+
+-- ----------------------------------------------------------------------------
+-- AppUser - Konto (E-Mail + Passwort)
+-- displayName: Klarname fuer Anzeige; faellt auf email zurueck, wenn leer.
+-- resetToken/-Expiry: Passwort-zuruecksetzen-Flow.
+-- ----------------------------------------------------------------------------
+CREATE TABLE AppUser (
+    id               NVARCHAR(100) NOT NULL PRIMARY KEY,
+    email            NVARCHAR(255) NOT NULL,
+    passwordHash     NVARCHAR(255) NOT NULL,
+    displayName      NVARCHAR(200) NULL,
+    createdAt        DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
+    resetToken       NVARCHAR(255) NULL,
+    resetTokenExpiry DATETIME2     NULL,
+    CONSTRAINT UQ_AppUser_Email UNIQUE (email)
+);
+
+
+-- ----------------------------------------------------------------------------
+-- OrbitMember - Mitgliedschaft eines Nutzers in einem Orbit
+-- userId ist NULL, solange die eingeladene Person sich noch nicht
+--   registriert hat (status 'pending'); der Bezug laeuft dann ueber email.
+-- role:   'pilot' | 'copilot'
+-- status: 'active' | 'suspended' | 'pending'
+-- Hinweis: email wird bei einer Profil-Aenderung aus AppUser mitgezogen
+--   (PATCH /auth/profile) - der Erinnerungs-Scheduler verschickt an diese
+--   Adresse, nicht an AppUser.email.
+-- ----------------------------------------------------------------------------
+CREATE TABLE OrbitMember (
+    id          NVARCHAR(100) NOT NULL PRIMARY KEY,
+    orbitId     NVARCHAR(100) NOT NULL,
+    userId      NVARCHAR(100) NULL,
+    email       NVARCHAR(255) NOT NULL,
+    role        NVARCHAR(20)  NOT NULL,
+    status      NVARCHAR(20)  NOT NULL DEFAULT 'active',
+    inviteToken NVARCHAR(255) NULL,
+    invitedAt   DATETIME2     NULL,
+    joinedAt    DATETIME2     NULL,
+    CONSTRAINT FK_OrbitMember_Orbit FOREIGN KEY (orbitId) REFERENCES TaskDomain(id),
+    CONSTRAINT FK_OrbitMember_User  FOREIGN KEY (userId)  REFERENCES AppUser(id),
+    CONSTRAINT UQ_OrbitMember_Email UNIQUE (orbitId, email)
+);
+
+
+-- ----------------------------------------------------------------------------
+-- Task - eine "Sphere" (Kapsel). Wiederkehrende Aufgaben bilden ueber
+--   previousTaskId eine Kette.
+-- startDate/dueDate sind reine KALENDERDATEN - die Uhrzeit ist immer
+--   00:00:00. Keine UTC-Umrechnung beim Speichern, sonst rutscht das Datum
+--   einen Tag zurueck (der Fehler, den v13 einmalig geradegerueckt hat).
+-- dueDate ist optional.
+-- assignedToMemberId: bewusst OHNE FK-Constraint, damit das Entfernen eines
+--   Mitglieds nicht blockiert; das Aufraeumen macht das Backend
+--   (DELETE /domains/:id/members/:memberId).
+-- reminderEmailSentAt: verhindert Doppelversand durch den Scheduler.
+-- ----------------------------------------------------------------------------
 CREATE TABLE Task (
-    id NVARCHAR(100) PRIMARY KEY,
-    domainId NVARCHAR(100) NOT NULL,
-    title NVARCHAR(200) NOT NULL,
-    description NVARCHAR(1000),
-    startDate DATETIME2 NOT NULL,
-    dueDate DATETIME2 NOT NULL,
-    recurrenceFrequency NVARCHAR(50) NOT NULL DEFAULT 'none',
-    recurrenceInterval INT NOT NULL DEFAULT 1,
-    status NVARCHAR(50) NOT NULL DEFAULT 'open',
-    createdAt DATETIME2 DEFAULT GETUTCDATE(),
-    completedAt DATETIME2,
-    reminderAt DATETIME2,
-    reminderEmailSentAt DATETIME2,
-    previousTaskId NVARCHAR(100),
-    FOREIGN KEY (domainId) REFERENCES TaskDomain(id),
-    FOREIGN KEY (previousTaskId) REFERENCES Task(id)
+    id                  NVARCHAR(100)  NOT NULL PRIMARY KEY,
+    domainId            NVARCHAR(100)  NOT NULL,
+    title               NVARCHAR(200)  NOT NULL,
+    description         NVARCHAR(1000) NULL,
+    startDate           DATETIME2      NOT NULL,
+    dueDate             DATETIME2      NULL,
+    recurrenceFrequency NVARCHAR(50)   NOT NULL DEFAULT 'none',
+    recurrenceInterval  INT            NOT NULL DEFAULT 1,
+    status              NVARCHAR(50)   NOT NULL DEFAULT 'open',
+    createdAt           DATETIME2      NULL DEFAULT GETUTCDATE(),
+    completedAt         DATETIME2      NULL,
+    reminderAt          DATETIME2      NULL,
+    reminderEmailSentAt DATETIME2      NULL,
+    previousTaskId      NVARCHAR(100)  NULL,
+    assignedToMemberId  NVARCHAR(100)  NULL,
+    CONSTRAINT FK_Task_Domain       FOREIGN KEY (domainId)       REFERENCES TaskDomain(id),
+    CONSTRAINT FK_Task_PreviousTask FOREIGN KEY (previousTaskId) REFERENCES Task(id)
 );
 
--- TaskLogEntry table
+
+-- ----------------------------------------------------------------------------
+-- TaskLogEntry - Aktivitaetsverlauf einer Sphere
+-- [user] haelt den Namen zum Zeitpunkt des Eintrags; die Anzeige bevorzugt
+--   den aktuellen AppUser.displayName (COALESCE in GET /tasks/:id/log).
+-- ----------------------------------------------------------------------------
 CREATE TABLE TaskLogEntry (
-    id NVARCHAR(100) PRIMARY KEY,
-    taskId NVARCHAR(100) NOT NULL,
-    [user] NVARCHAR(100),
-    [text] NVARCHAR(1000) NOT NULL,
-    timestamp DATETIME2 DEFAULT GETUTCDATE(),
-    FOREIGN KEY (taskId) REFERENCES Task(id)
+    id        NVARCHAR(100)  NOT NULL PRIMARY KEY,
+    taskId    NVARCHAR(100)  NOT NULL,
+    [user]    NVARCHAR(100)  NULL,
+    [text]    NVARCHAR(1000) NOT NULL,
+    timestamp DATETIME2      NULL DEFAULT GETUTCDATE(),
+    CONSTRAINT FK_TaskLogEntry_Task FOREIGN KEY (taskId) REFERENCES Task(id)
 );
 
--- DeviceToken table (v9) — registrierte Push-Tokens je Nutzer
+
+-- ----------------------------------------------------------------------------
+-- DeviceToken - registrierte Push-Tokens je Nutzer
+-- Ein Nutzer kann mehrere Geraete haben; token ist global eindeutig.
 -- platform: 'android' | 'windows' | 'ios'
+-- ----------------------------------------------------------------------------
 CREATE TABLE DeviceToken (
     id         NVARCHAR(100) NOT NULL PRIMARY KEY,
     userId     NVARCHAR(100) NOT NULL,
@@ -47,12 +133,19 @@ CREATE TABLE DeviceToken (
     platform   NVARCHAR(20)  NOT NULL,
     createdAt  DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
     lastSeenAt DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
-    CONSTRAINT FK_DeviceToken_User FOREIGN KEY (userId) REFERENCES AppUser(id),
+    CONSTRAINT FK_DeviceToken_User  FOREIGN KEY (userId) REFERENCES AppUser(id),
     CONSTRAINT UQ_DeviceToken_Token UNIQUE (token)
 );
 
--- OrbitEvent table (v9) — Feed der Team-Ereignisse je Orbit
+
+-- ----------------------------------------------------------------------------
+-- OrbitEvent - Feed der Team-Ereignisse je Orbit
+--   (In-App-Glocke + Windows-Toast-Polling)
 -- type: 'sphere_created' | 'sphere_landed' | 'sphere_assigned' | 'log_added'
+-- body: fertiger Anzeigetext
+-- actorUserId: Ausloeser - wird beim Abruf herausgefiltert (niemand sieht
+--   die eigene Aktion).
+-- ----------------------------------------------------------------------------
 CREATE TABLE OrbitEvent (
     id          NVARCHAR(100)  NOT NULL PRIMARY KEY,
     orbitId     NVARCHAR(100)  NOT NULL,
@@ -65,4 +158,29 @@ CREATE TABLE OrbitEvent (
     body        NVARCHAR(1000) NOT NULL,
     createdAt   DATETIME2      NOT NULL DEFAULT GETUTCDATE()
 );
+
 CREATE INDEX IX_OrbitEvent_Orbit_CreatedAt ON OrbitEvent (orbitId, createdAt DESC);
+
+
+-- ----------------------------------------------------------------------------
+-- OrbitEventDismissed - je Nutzer ausgeblendete Meldungen
+-- OrbitEvent haelt EINE Zeile pro Ereignis, geteilt von allen Mitgliedern des
+-- Orbits. Ein echtes DELETE wuerde die Meldung deshalb bei allen entfernen.
+-- Bewusst serverseitig statt im Geraetespeicher: Wer am Desktop aufraeumt,
+-- soll die Meldung auch am Handy los sein.
+-- ----------------------------------------------------------------------------
+CREATE TABLE OrbitEventDismissed (
+    eventId     NVARCHAR(100) NOT NULL,
+    userId      NVARCHAR(100) NOT NULL,
+    dismissedAt DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
+    CONSTRAINT PK_OrbitEventDismissed PRIMARY KEY (eventId, userId),
+    CONSTRAINT FK_OrbitEventDismissed_Event
+        FOREIGN KEY (eventId) REFERENCES OrbitEvent(id) ON DELETE CASCADE,
+    CONSTRAINT FK_OrbitEventDismissed_User
+        FOREIGN KEY (userId) REFERENCES AppUser(id)
+);
+
+-- Der Filter in GET /events fragt immer nach userId + eventId; das deckt der
+-- Primaerschluessel ab. Zusaetzlicher Index fuer das Aufraeumen aller
+-- Meldungen eines Nutzers ("alle ausblenden").
+CREATE INDEX IX_OrbitEventDismissed_User ON OrbitEventDismissed (userId);

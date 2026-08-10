@@ -38,8 +38,8 @@ dort jetzt „Co-Pilot" mit einem Hinweis, dass nur der Pilot Co-Piloten verwalt
   `AppUser` — die `OrbitMember`-Zeilen behielten die alte Adresse. Da der Erinnerungs-Scheduler
   seine Mails an `OrbitMember.email` schickt, wären Erinnerungen still an die alte Adresse
   gegangen. Das Backend zieht die Mitgliedschaften jetzt mit;
-  [v11_orbitmember_email_sync.sql](backend/db/v11_orbitmember_email_sync.sql) räumt Altbestände
-  auf (Stand 08.08.2026 geprüft: keine Abweichungen vorhanden).
+  das einmalige Aufräumskript `v11_orbitmember_email_sync.sql` hat die Altbestände bereinigt
+  (Stand 08.08.2026 geprüft: keine Abweichungen vorhanden; Skript danach entfernt).
 
 ### 8. Kräftige Farben zur Auswahl beim Orbit anlegen
 **Gewünscht:** 08.08.2026 · **Umgesetzt in:** v1.0.14 · **Plattformen:** Desktop + App
@@ -100,9 +100,10 @@ Ereigniszeile bleibt unangetastet, andere Mitglieder sehen ihre Meldung unverän
 oben in der Liste „Alle ausblenden". Der Server wird jeweils zuerst gefragt — schlägt es
 fehl, kommt der Eintrag zurück, statt nur optisch zu verschwinden.
 
-**Erfordert Migration** [v12_event_dismissed.sql](backend/db/v12_event_dismissed.sql).
-Diese muss **vor** dem Backend-Deploy laufen: Fehlt die Tabelle, scheitert `GET /events` und
-es kommen gar keine Meldungen mehr an.
+**Erforderte Migration** `v12_event_dismissed.sql` (Tabelle `OrbitEventDismissed`, ausgeführt;
+inzwischen Teil von [backend/db/schema.sql](backend/db/schema.sql)). Sie musste **vor** dem
+Backend-Deploy laufen: Fehlt die Tabelle, scheitert `GET /events` und es kommen gar keine
+Meldungen mehr an.
 
 **Offen geblieben:** Der Lesestatus (rotes Badge) liegt weiterhin pro Gerät. Am Desktop
 gelesen heißt am Handy noch ungelesen. Ließe sich mit derselben Technik auf das Konto
@@ -136,8 +137,9 @@ Wert. Die Erinnerung selbst fasst das Datum nicht an.
 auf Mitternacht normalisiert — genau wie `createTask`. `reminderAt` bleibt bewusst UTC, das
 ist ein echter Zeitpunkt.
 
-**Altbestand:** [v13_fix_shifted_dates.sql](backend/db/v13_fix_shifted_dates.sql) rückt bereits
-verschobene Werte gerade (erst Prüfabfrage, dann Korrektur, dann Kontrolle).
+**Altbestand:** Das einmalige Datenskript `v13_fix_shifted_dates.sql` hat bereits verschobene
+Werte geradegerückt (Prüfung 09.08.2026: 1 Zeile Zeitzonen-Verschiebung, 49 Zeilen
+Erfassungszeitstempel; Skript danach entfernt).
 
 **Zur Randbedingung „nur wenn Start = Fällig":** Vermutlich ein Wahrnehmungseffekt — die
 Verschiebung trat immer auf, fiel aber nur dann sofort ins Auge, weil aus „heute fällig"
@@ -283,8 +285,9 @@ bestehender Spheres geschieht. Listen-Orbits lösen keine Team-Benachrichtigunge
 ergäben 20 erfasste Positionen 20 Meldungen beim Co-Piloten.
 
 **Umsetzung:**
-- DB: [backend/db/v10_shopping_list.sql](backend/db/v10_shopping_list.sql) — Spalte
-  `isShoppingList` in `TaskDomain`. **Muss im Azure-Query-Editor ausgeführt werden.**
+- DB: Spalte `isShoppingList` in `TaskDomain` (Migration `v10_shopping_list.sql` im
+  Azure-Query-Editor ausgeführt; die Spalte steht jetzt in
+  [backend/db/schema.sql](backend/db/schema.sql)).
 - Backend: Feld in `GET`/`POST /domains`; Guard in `emitOrbitEvent()` (deckt alle fünf
   Ereignisarten auf einmal ab); Aufräum-Schritt im 5-Minuten-Scheduler löscht erledigte
   Positionen 24 Std. nach `completedAt` (Verlaufseinträge zuerst wegen Fremdschlüssel).
