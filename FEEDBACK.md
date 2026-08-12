@@ -332,6 +332,28 @@ Nutzer ginge es erst, wenn die Gerätezeitzone gespeichert wird — das braucht 
 `AppUser`, eine Migration und ein Paket wie `flutter_timezone`. Relevant erst bei Nutzern
 außerhalb Deutschlands.
 
+### 19. Orbit-Beschreibung lässt sich nachträglich nicht ändern
+**Gemeldet:** 12.08.2026 · **Erledigt in:** v1.0.17 · **Plattformen:** Desktop + App
+
+**Problem:** Beim Anlegen eines Orbits lassen sich Name und Beschreibung erfassen. Danach war
+nur noch der Name änderbar — wer die Beschreibung vergessen hatte, kam nicht mehr heran.
+
+**Ursache:** Es gab ausschließlich `PATCH /domains/:id/name`. Für die Beschreibung existierte
+kein Endpunkt und im Menü kein Einstieg. Angezeigt wird sie durchaus: auf dem Desktop mittig
+unter dem Orbit-Namen, auf dem Handy unter der Teilnehmerleiste — nur eben unveränderlich.
+
+**Lösung:** Aus „Umbenennen" wird **„Bearbeiten"**. Der Dialog enthält jetzt Name *und*
+Beschreibung, beide mit den Zeichengrenzen aus Punkt 13 (100 bzw. 500). Gespeichert wird nur,
+was sich geändert hat. Neuer Endpunkt `PATCH /domains/:id/description`, wie das Umbenennen mit
+`requirePilot` abgesichert — die Beschreibung steht im Kopfbereich bei allen Mitgliedern und
+gehört damit in dieselbe Rechteklasse. Auf dem Handy trägt der Menüpunkt den Zusatz „Name und
+Beschreibung", damit erkennbar ist, dass er mehr kann als früher.
+
+**Latenter Fehler, mitbehoben:** `renameDomain` setzte den Orbit lokal von Hand neu zusammen
+und ließ dabei `isShoppingList` und `myRole` fallen. Beim Umbenennen eines Einkaufslisten-Orbits
+verlor dieser bis zum nächsten Abgleich (bis zu 30 Sekunden) seinen Listen-Modus und verhielt
+sich wie ein normaler Orbit. `TaskDomain` hat jetzt ein `copyWith`, das alle Felder mitnimmt.
+
 ---
 
 ## Erledigt

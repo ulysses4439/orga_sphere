@@ -86,6 +86,16 @@ class ApiService {
     _checkStatus(response);
   }
 
+  static Future<void> updateDomainDescription(
+      String domainId, String description) async {
+    final response = await http.patch(
+      Uri.parse('$_baseUrl/domains/$domainId/description'),
+      headers: _headers,
+      body: jsonEncode({'description': description}),
+    );
+    _checkStatus(response);
+  }
+
   static Future<void> deleteDomain(String domainId) async {
     final response = await http.delete(
       Uri.parse('$_baseUrl/domains/$domainId'),

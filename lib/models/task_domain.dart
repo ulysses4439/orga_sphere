@@ -35,6 +35,28 @@ class TaskDomain {
   /// Co-Piloten einladen)?
   bool get isPilot => myRole == 'pilot';
 
+  /// Kopie mit einzelnen geaenderten Feldern.
+  ///
+  /// Wichtig fuer die lokale Pflege nach einer Aenderung: Wird der Orbit von
+  /// Hand neu zusammengesetzt, fallen leicht Felder unter den Tisch, die gerade
+  /// nicht im Blick sind – [isShoppingList] etwa fiele auf `false` zurueck und
+  /// ein Listen-Orbit verhielte sich bis zum naechsten Abgleich wie ein
+  /// normaler.
+  TaskDomain copyWith({
+    String? name,
+    String? description,
+    String? colorHex,
+  }) {
+    return TaskDomain(
+      id: id,
+      name: name ?? this.name,
+      description: description ?? this.description,
+      colorHex: colorHex ?? this.colorHex,
+      isShoppingList: isShoppingList,
+      myRole: myRole,
+    );
+  }
+
   factory TaskDomain.fromJson(Map<String, dynamic> json) {
     // SQL Server liefert BIT je nach Treiber als bool oder als 0/1.
     final raw = json['isShoppingList'];

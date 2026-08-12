@@ -1216,6 +1216,25 @@ app.patch('/domains/:id/name', requireAuth, requirePilot, async (req, res) => {
   }
 });
 
+// Beschreibung aendern – wie das Umbenennen Pilotensache. Sie steht im
+// Kopfbereich des Orbits bei allen Mitgliedern.
+app.patch('/domains/:id/description', requireAuth, requirePilot, async (req, res) => {
+  const { id } = req.params;
+  const { description } = req.body;
+  if (rejectIfTooLong(res, 'Die Beschreibung', description, FIELD_LIMITS.orbitDescription)) return;
+  try {
+    const p = await getPool();
+    const result = await p.request()
+      .input('id',          sql.NVarChar, id)
+      .input('description', sql.NVarChar, description ?? '')
+      .query('UPDATE TaskDomain SET description = @description WHERE id = @id');
+    if (result.rowsAffected[0] === 0) return res.status(404).json({ error: 'Domain not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete('/domains/:id', requireAuth, requirePilot, async (req, res) => {
   const { id } = req.params;
   try {

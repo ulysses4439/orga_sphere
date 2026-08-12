@@ -176,7 +176,7 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
   Win32Window::Size size(1280, 720);
   // Versionsnummer im Fenstertitel (grauer Titelbalken). Bei jeder
   // Versionserhöhung hier mit pubspec.yaml und kAppVersion synchron halten.
-  if (!window.Create(L"OrgaSphere 1.0.16", origin, size)) {
+  if (!window.Create(L"OrgaSphere 1.0.17", origin, size)) {
     return EXIT_FAILURE;
   }
   window.SetQuitOnClose(true);

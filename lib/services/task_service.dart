@@ -256,13 +256,17 @@ class TaskService extends ChangeNotifier {
     await ApiService.renameDomain(domainId, name);
     final idx = _domains.indexWhere((d) => d.id == domainId);
     if (idx != -1) {
-      final d = _domains[idx];
-      _domains[idx] = TaskDomain(
-        id: d.id,
-        name: name,
-        description: d.description,
-        colorHex: d.colorHex,
-      );
+      _domains[idx] = _domains[idx].copyWith(name: name);
+    }
+    notifyListeners();
+  }
+
+  Future<void> updateDomainDescription(
+      String domainId, String description) async {
+    await ApiService.updateDomainDescription(domainId, description);
+    final idx = _domains.indexWhere((d) => d.id == domainId);
+    if (idx != -1) {
+      _domains[idx] = _domains[idx].copyWith(description: description);
     }
     notifyListeners();
   }

@@ -526,20 +526,31 @@ class _TaskListScreenState extends State<TaskListScreen>
         await _taskService.moveTask(task.id, domain.id);
         if (mounted) setState(() {});
       },
-      onRename: () => _showRenameOrbitDialog(domain),
+      onRename: () => _showEditOrbitDialog(domain),
       onDelete: () => _showDeleteOrbitDialog(domain),
       onInviteCoPilot: () => _showInviteCoPilotDialog(domain),
     );
   }
 
-  Future<void> _showRenameOrbitDialog(TaskDomain domain) async {
-    final result = await showDialog<String>(
+  Future<void> _showEditOrbitDialog(TaskDomain domain) async {
+    final result = await showDialog<_OrbitEdit>(
       context: context,
-      builder: (ctx) => _OrbitRenameDialog(initialName: domain.name),
+      builder: (ctx) => _OrbitEditDialog(
+        initialName: domain.name,
+        initialDescription: domain.description,
+      ),
     );
-    if (result == null || result.isEmpty || !mounted) return;
+    if (result == null || !mounted) return;
     try {
-      await _taskService.renameDomain(domain.id, result);
+      // Nur schicken, was sich wirklich geändert hat – zwei Endpunkte, aber
+      // im Normalfall nur ein Aufruf.
+      if (result.name != domain.name) {
+        await _taskService.renameDomain(domain.id, result.name);
+      }
+      if (result.description != domain.description) {
+        await _taskService.updateDomainDescription(
+            domain.id, result.description);
+      }
       if (mounted) setState(() {});
     } catch (e) {
       if (mounted) {
@@ -1032,11 +1043,13 @@ class _TaskListScreenState extends State<TaskListScreen>
               ),
               ListTile(
                 leading: const Icon(Icons.edit_outlined, color: Colors.white70),
-                title: const Text('Umbenennen',
+                title: const Text('Bearbeiten',
                     style: TextStyle(color: Colors.white)),
+                subtitle: const Text('Name und Beschreibung',
+                    style: TextStyle(color: Colors.white38, fontSize: 12)),
                 onTap: () {
                   Navigator.of(ctx).pop();
-                  _showRenameOrbitDialog(domain);
+                  _showEditOrbitDialog(domain);
                 },
               ),
               ListTile(
@@ -1359,45 +1372,86 @@ class _IconChip extends StatelessWidget {
 
 // ─────────────────────────────────────────────────────────────────────────────
 
-class _OrbitRenameDialog extends StatefulWidget {
-  final String initialName;
-  const _OrbitRenameDialog({required this.initialName});
-
-  @override
-  State<_OrbitRenameDialog> createState() => _OrbitRenameDialogState();
+/// Ergebnis des Bearbeiten-Dialogs.
+class _OrbitEdit {
+  final String name;
+  final String description;
+  const _OrbitEdit(this.name, this.description);
 }
 
-class _OrbitRenameDialogState extends State<_OrbitRenameDialog> {
-  late final TextEditingController _ctrl;
+/// Dialog zum Bearbeiten eines Orbits.
+///
+/// Umfasst bewusst Name UND Beschreibung: Beides wird beim Anlegen erfasst, die
+/// Beschreibung liess sich danach aber nicht mehr aendern – wer sie vergessen
+/// hatte, kam nicht mehr heran. Die Farbe bleibt aussen vor, die hat auf den
+/// Orbit-Kacheln ihre eigene Auswahl.
+class _OrbitEditDialog extends StatefulWidget {
+  final String initialName;
+  final String initialDescription;
+
+  const _OrbitEditDialog({
+    required this.initialName,
+    required this.initialDescription,
+  });
+
+  @override
+  State<_OrbitEditDialog> createState() => _OrbitEditDialogState();
+}
+
+class _OrbitEditDialogState extends State<_OrbitEditDialog> {
+  late final TextEditingController _nameCtrl;
+  late final TextEditingController _descCtrl;
 
   @override
   void initState() {
     super.initState();
-    _ctrl = TextEditingController(text: widget.initialName);
+    _nameCtrl = TextEditingController(text: widget.initialName);
+    _descCtrl = TextEditingController(text: widget.initialDescription);
   }
 
   @override
   void dispose() {
-    _ctrl.dispose();
+    _nameCtrl.dispose();
+    _descCtrl.dispose();
     super.dispose();
   }
 
   void _submit() {
-    final v = _ctrl.text.trim();
-    if (v.isNotEmpty) Navigator.pop(context, v);
+    final name = _nameCtrl.text.trim();
+    if (name.isEmpty) return;
+    Navigator.pop(context, _OrbitEdit(name, _descCtrl.text.trim()));
   }
 
   @override
   Widget build(BuildContext context) {
     return AlertDialog(
-      title: const Text('Orbit umbenennen'),
-      content: TextField(
-        controller: _ctrl,
-        autofocus: true,
-        maxLength: kOrbitNameMaxLength,
-        buildCounter: nearLimitCounter,
-        decoration: const InputDecoration(labelText: 'Name'),
-        onSubmitted: (_) => _submit(),
+      title: const Text('Orbit bearbeiten'),
+      content: Column(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          TextField(
+            controller: _nameCtrl,
+            autofocus: true,
+            textCapitalization: TextCapitalization.sentences,
+            maxLength: kOrbitNameMaxLength,
+            buildCounter: nearLimitCounter,
+            decoration: const InputDecoration(labelText: 'Name'),
+            onSubmitted: (_) => _submit(),
+          ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _descCtrl,
+            textCapitalization: TextCapitalization.sentences,
+            maxLines: 3,
+            maxLength: kOrbitDescriptionMaxLength,
+            buildCounter: nearLimitCounter,
+            decoration: const InputDecoration(
+              labelText: 'Beschreibung',
+              alignLabelWithHint: true,
+              border: OutlineInputBorder(),
+            ),
+          ),
+        ],
       ),
       actions: [
         TextButton(
@@ -1541,8 +1595,12 @@ class _OrbitTileState extends State<_OrbitTile> {
                       ),
                       const PopupMenuItem(
                         value: 'rename',
-                        child: Text('Umbenennen',
-                            style: TextStyle(color: Colors.white)),
+                        child: Row(children: [
+                          Icon(Icons.edit_outlined, color: Colors.white70, size: 18),
+                          SizedBox(width: 8),
+                          Text('Bearbeiten',
+                              style: TextStyle(color: Colors.white)),
+                        ]),
                       ),
                       const PopupMenuItem(
                         value: 'delete',
