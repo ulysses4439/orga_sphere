@@ -177,6 +177,161 @@ Windows-Profil getrennt — jedes Profil kann sich mit einem eigenen OrgaSphere-
 **Paketinhalt geändert:** Ab v1.0.15 enthält das ZIP **vier** Dateien; `install_orgasphere.ps1`
 gehört jetzt zwingend dazu, die `.bat` ruft sie nur noch auf.
 
+### 13. Langer Sphere-Titel lässt sich nicht speichern — ohne jeden Hinweis
+**Gemeldet:** 12.08.2026 · **Erledigt in:** v1.0.16 · **Plattformen:** Desktop + App
+
+**Problem:** Ein sehr langer Titel ließ sich nicht speichern. Es erschien weder eine Meldung
+noch ein Hinweis auf eine Zeichengrenze — das Speichern passierte schlicht nicht.
+
+**Ursache:** `Task.title` ist in der Datenbank `NVARCHAR(200)`. Ab 201 Zeichen antwortet Azure
+SQL mit *„String or binary data would be truncated"*, das Backend reichte das als 500er durch.
+An zwei Stellen wurde der Fehler in der App zusätzlich verschluckt: beim Verlassen der
+Detailansicht (`_flushPendingEdits`, dort bewusst still) und in der Schnell-Eingabe der
+Sphere-Liste, die ein leeres `catch (_) {}` hatte. Deshalb kam gar keine Rückmeldung an.
+
+**Lösung — drei Ebenen:**
+- Neue zentrale Datei [field_limits.dart](lib/utils/field_limits.dart) hält die Grenzen exakt
+  passend zu den Spaltenbreiten: Sphere-Titel und Listenposition 200, Sphere-Beschreibung 1000,
+  Orbit-Name 100, Orbit-Beschreibung 500, Verlaufseintrag 1000, Anzeigename 200.
+- **Jedes** Eingabefeld, das in diese Spalten schreibt, hat jetzt `maxLength`. Zu lang tippen
+  ist damit unmöglich, eingefügter Text wird beim Einfügen gekappt statt beim Speichern zu
+  scheitern. In den Anlege-Formularen steht der Zähler dauerhaft unter dem Feld; in den
+  schlanken Inline-Feldern (Detailtitel, Schnell-Eingabe, Dialoge) blendet er sich ab 80 %
+  Füllstand ein und wird bei 200/200 rot — dauerhaft sichtbar würde er dort das Layout stören.
+- Das Backend prüft dieselben Grenzen und antwortet mit Klartext („Der Titel darf höchstens
+  200 Zeichen lang sein (aktuell 340).") statt mit einem 500er. Das verschluckte `catch (_) {}`
+  in der Schnell-Eingabe zeigt jetzt ebenfalls eine Meldung.
+
+### 14. Windows: OrgaSphere lässt sich mehrfach starten
+**Gemeldet:** 12.08.2026 · **Erledigt in:** v1.0.16 · **Plattform:** Windows
+
+**Problem:** Jeder Klick auf Kachel oder Verknüpfung öffnete ein weiteres OrgaSphere-Fenster,
+statt das laufende in den Vordergrund zu holen.
+
+**Ursache: kein Fehler im eigentlichen Sinn, sondern eine Lücke.** Der Flutter-Runner für
+Windows kennt keine Instanzsperre — Windows startet bei jeder Aktivierung einen neuen Prozess.
+Auf Android tritt das nicht auf, dort verwendet das System die vorhandene Activity wieder.
+Mehrere Instanzen bedeuteten je eigenen Zustand, eigenes Polling und doppelte Meldungen.
+
+**Lösung** in [main.cpp](windows/runner/main.cpp), noch bevor die Flutter-Engine startet: Ein
+benannter Mutex (`Local\OrgaSphere.SingleInstance`) erkennt die laufende Instanz. Der zweite
+Start sucht deren Fenster, holt es nach vorn und beendet sich. Die Fenstersuche prüft die
+Fensterklasse **und** den EXE-Pfad — die Klasse `FLUTTER_RUNNER_WIN32_WINDOW` ist bei jeder
+Flutter-App gleich, sonst würde im Zweifel eine fremde Anwendung nach vorn geholt. Minimierte
+Fenster werden wiederhergestellt; blockiert Windows `SetForegroundWindow`, greift ein Fallback
+über `AttachThreadInput`, damit nicht nur die Taskleiste blinkt.
+
+`Local\` statt `Global\` ist Absicht: Ein zweiter angemeldeter Windows-Benutzer darf OrgaSphere
+weiterhin starten, sein Fenster liegt auf einem anderen Desktop. Schlägt das Anlegen des Mutex
+fehl, startet die App normal — lieber zwei Fenster als gar keins.
+
+**Geprüft** am Release-Build: dreimal gestartet → bleibt bei einem Prozess; nach dem Beenden
+wieder startbar; minimiertes Fenster wird wiederhergestellt und ist danach das Vordergrundfenster.
+**Hinweis für die Entwicklung:** Läuft die App bereits, beendet sich ein zusätzliches
+`flutter run` sofort wieder — das ist die gewollte Wirkung.
+
+### 15. Co-Pilot kann einen Orbit umbenennen
+**Gemeldet:** 12.08.2026 · **Erledigt in:** v1.0.16 · **Plattformen:** Desktop + App
+
+**Ursache:** `PATCH /domains/:id/name` lief unter `requireMember` statt `requirePilot` — anders
+als Löschen und Einladen, die bereits korrekt abgesichert waren. Der Orbit-Name taucht in
+Einladungsmails, Erinnerungen und Team-Meldungen aller Mitglieder auf; ein Co-Pilot konnte ihn
+also unter allen anderen wegziehen.
+
+**Lösung:** Der Endpunkt verlangt jetzt Pilotenrechte. Damit die Aktion gar nicht erst
+angeboten wird, liefert `GET /domains` neu die eigene Rolle je Orbit mit (`myRole`); `TaskDomain`
+hat dafür `isPilot`. Auf dem Desktop entfällt für Co-Piloten das Drei-Punkte-Menü am Orbit
+vollständig, auf dem Handy zeigt das Menü beim Langdrücken statt der Aktionen den Grund an.
+Fehlt das Feld (älteres Backend), gilt der Fallback „Pilot" — ungefährlich, weil die Rechte am
+Server hängen und nicht an dieser Anzeige.
+
+### 16. Co-Pilot sieht nicht, wer der Pilot ist
+**Gemeldet:** 12.08.2026 · **Erledigt in:** v1.0.16 · **Plattformen:** Desktop + App
+
+**Problem:** Seit v1.0.14 steht in der Teilnehmerleiste „Co-Pilot", wo der Einladen-Knopf
+fehlt (siehe Punkt 7). Damit war zwar klar, dass man nichts ändern darf — aber nicht, wen man
+für Änderungen ansprechen muss.
+
+**Lösung:** Statt „Co-Pilot" steht dort jetzt **„Pilot: Anna Schmidt"**; ein Klick öffnet die
+Angaben inklusive E-Mail-Adresse. Zusätzlich reagieren alle Avatare der Leiste auf Tippen: Der
+Pilot verwaltet damit wie bisher, alle anderen sehen Name, E-Mail, Rolle und Status. Vorher war
+das nur per Tooltip erreichbar — auf dem Handy also praktisch gar nicht.
+
+### 17. Eingeladene Co-Piloten sehen sofort wie aktive Teilnehmer aus
+**Gemeldet:** 12.08.2026 · **Erledigt in:** v1.0.16 · **Plattformen:** Desktop + App
+
+**Problem:** Direkt nach dem Einladen erschien der Avatar des Co-Piloten farbig — als wäre er
+bereits aktiv dabei, obwohl er von der Einladung noch gar nichts wusste.
+
+**Ursache — tiefer als die Darstellung:** Für eine E-Mail-Adresse **mit** OrgaSphere-Konto gab
+es den Zustand „eingeladen" überhaupt nicht. `POST /domains/:id/members` trug solche Nutzer
+sofort als `active` ein. Nur Eingeladene ohne Konto bekamen `pending`.
+
+**Lösung — Einladungen müssen angenommen werden:**
+- Jede Einladung startet als `pending`, mit und ohne Konto.
+- Der offene Avatar ist ein **grauer Ring mit grauer Schrift** auf dem schwarzen Grund der
+  Leiste, dazu eine kleine Uhr in der Ecke. Bewusst kein gefüllter grauer Kreis: Eine gefüllte
+  Fläche wirkt auf Schwarz wie eine eigene Farbe und damit wieder wie „dabei". Die leere Kontur
+  liest sich als „Platz reserviert, noch nicht besetzt", die Uhr macht den Unterschied auch
+  ohne Farbwahrnehmung erkennbar.
+- Der Eingeladene sieht beim nächsten App-Start ein Banner über der Orbit-Liste mit
+  **Annehmen / Ablehnen** (Desktop und Handy). Annehmen aktiviert die Mitgliedschaft, lädt den
+  Orbit nach und meldet dem Team „… ist beigetreten". Ablehnen entfernt den Eintrag, sodass der
+  Pilot dieselbe Person später erneut einladen kann.
+- Neue Endpunkte: `GET /invitations`, `POST /invitations/:id/accept`, `POST /invitations/:id/decline`.
+- Der E-Mail-Link funktioniert weiter und hat jetzt eine Variante für bereits registrierte
+  Konten: Bestätigung mit dem eigenen Passwort statt Konto anlegen.
+
+**Nebenbefund, mitbehoben:** Auf dem alten Weg konnte jeder, der den Einladungslink in die
+Hände bekam, die Einladung ohne Passwortprüfung annehmen. `POST /invite` prüft bei vorhandenem
+Konto jetzt das Passwort.
+
+**Zur Sicherheit der Zwischenstufe geprüft:** Eine offene Einladung gibt **keinerlei** Zugriff.
+Orbit-Liste, Sphere-Abfragen, Push-Empfänger und der Erinnerungs-Scheduler filtern ausnahmslos
+auf `status = 'active'`. Die `userId` wird bei Eingeladenen mit Konto trotzdem schon gesetzt,
+damit die Einladung auch nach einem Adresswechsel zugeordnet bleibt.
+
+### 18. Wiederholende Sphere verliert ihre Erinnerung
+**Gemeldet:** 12.08.2026 · **Erledigt in:** v1.0.16 · **Plattformen:** Desktop + App (Backend)
+
+**Problem:** Bei einer Sphere mit Wiederholung (z. B. alle 3 Tage) wurde die Folge-Sphere
+zuverlässig angelegt — eine gesetzte Erinnerung fehlte dort aber. Erwartet: Die Erinnerung
+wandert mit, versetzt um genau den Wiederholungsrhythmus (12.08. 06:30 → 15.08. 06:30).
+
+**Ursache:** In `createNextCapsuleIfNeeded` wurden Start- und Fälligkeitsdatum verschoben
+übernommen, `reminderAt` stand im INSERT schlicht nicht drin. Die Spalte blieb NULL, die
+Erinnerung war ab dem ersten Durchlauf still verschwunden.
+
+**Lösung:** Die Erinnerung wandert jetzt um denselben Rhythmus mit. `reminderEmailSentAt` wird
+bewusst **nicht** übernommen — sonst hielte der Scheduler die neue Erinnerung für bereits
+verschickt und würde nie eine Mail senden. Der Fix greift für beide Wege: Erledigen per Klick
+und den Scheduler, der fällige Folge-Spheres selbst anlegt.
+
+**Sommer-/Winterzeit berücksichtigt:** In UTC gerechnet wären „3 Tage" exakt 72 Stunden — fällt
+die Zeitumstellung dazwischen, würde aus 06:30 plötzlich 05:30 bzw. 07:30, und die Sphere liefe
+dauerhaft auf der falschen Uhrzeit weiter. Erinnerungen werden deshalb **auf der Wanduhr der
+Zeitzone** weitergezählt (`nextReminderDate`, Zone über `APP_TIMEZONE`, Standard `Europe/Berlin`).
+Start- und Fälligkeitsdatum rechnen weiter über reine Tage — sie liegen auf 00:00:00, dort gibt
+es keine Uhrzeit zu erhalten, und eine Zonenrechnung würde die Mitternacht verschieben.
+
+Die beiden unvermeidbaren Sonderfälle sind ausdrücklich entschieden: Die **übersprungene
+Stunde** im Frühjahr (02:30 gibt es nicht) rutscht nach hinten auf 03:30; die **doppelte Stunde**
+im Herbst nimmt den ersten Durchgang, die Erinnerung kommt also eher statt später.
+
+**Zweiter Fehler in derselben Funktion, mitbehoben:** `nextDate(null, …)` ergab über
+`new Date(null)` den 01.01.1970. Eine wiederkehrende Sphere **ohne** Fälligkeitsdatum bekam
+damit bei jedem Durchlauf ein Datum aus dem Jahr 1970 und stand sofort rot als überfällig da.
+Leere Datums liefern jetzt `null`.
+
+**Geprüft** gegen die echten Funktionen aus `index.js`, bewertet in deutscher Ortszeit: 12 Fälle,
+darunter beide Umstellungsrichtungen, übersprungene und doppelte Stunde, Mitternacht als
+Erinnerungszeit sowie leere Fälligkeit — alle wie erwartet.
+
+**Einschränkung:** Die Zeitzone ist fest auf `Europe/Berlin` (per `APP_TIMEZONE` änderbar). Pro
+Nutzer ginge es erst, wenn die Gerätezeitzone gespeichert wird — das braucht ein Feld an
+`AppUser`, eine Migration und ein Paket wie `flutter_timezone`. Relevant erst bei Nutzern
+außerhalb Deutschlands.
+
 ---
 
 ## Erledigt
