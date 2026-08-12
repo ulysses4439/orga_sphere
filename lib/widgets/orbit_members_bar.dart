@@ -38,12 +38,14 @@ Future<bool> showInviteCoPilotDialog(
   ctrl.dispose();
   if (result == null || result.isEmpty) return false;
   try {
-    final status = await ApiService.inviteCoPilot(domain.id, result);
+    await ApiService.inviteCoPilot(domain.id, result);
     if (context.mounted) {
-      final msg = status == 'invited'
-          ? 'Einladung an $result gesendet'
-          : '$result wurde als Co-Pilot hinzugefügt';
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg)));
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text('Einladung an $result gesendet. Der Avatar bleibt '
+              'grau, bis sie angenommen wurde.'),
+        ),
+      );
     }
     return true;
   } catch (e) {
@@ -166,6 +168,81 @@ class _OrbitMembersBarState extends State<OrbitMembersBar> {
     }
   }
 
+  /// Infodialog zu einem Teilnehmer. Fuer Co-Piloten der einzige Weg an diese
+  /// Angaben: Verwalten duerfen sie nichts, und auf dem Handy gibt es keinen
+  /// Mauszeiger, der einen Tooltip auslösen koennte.
+  Future<void> _showMemberInfo(OrbitMember member) async {
+    final status = member.isSuspended
+        ? 'gesperrt'
+        : member.isPending
+            ? 'eingeladen – noch nicht angenommen'
+            : 'aktiv';
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(member.displayLabel),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(member.email),
+            const SizedBox(height: 8),
+            Text(member.isPilot ? 'Pilot dieses Orbits' : 'Co-Pilot'),
+            Text('Status: $status'),
+            if (member.isPilot) ...[
+              const SizedBox(height: 8),
+              const Text(
+                'Umbenennen, Löschen und Einladungen laufen über den Piloten.',
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+              onPressed: () => Navigator.pop(ctx), child: const Text('Schließen')),
+        ],
+      ),
+    );
+  }
+
+  /// Rechte Seite der Leiste fuer Co-Piloten: die eigene Rolle UND der Name des
+  /// Piloten. Ohne den Namen weiss ein Co-Pilot zwar, dass er nichts aendern
+  /// darf, aber nicht, wen er dafuer ansprechen muss.
+  Widget _buildCoPilotHint(List<OrbitMember> members) {
+    OrbitMember? pilot;
+    for (final m in members) {
+      if (m.isPilot) {
+        pilot = m;
+        break;
+      }
+    }
+    final pilotLabel = pilot?.displayLabel;
+    return Tooltip(
+      message: 'Du bist Co-Pilot dieses Orbits.\n'
+          '${pilot == null ? 'Nur der Pilot kann ihn verwalten.' : 'Verwaltet wird er von ${pilot.displayLabel} (${pilot.email}).'}',
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 180),
+        child: GestureDetector(
+          onTap: pilot == null ? null : () => _showMemberInfo(pilot!),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(Icons.badge_outlined, color: Colors.white38, size: 14),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  pilotLabel == null ? 'Co-Pilot' : 'Pilot: $pilotLabel',
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(color: Colors.white54, fontSize: 11),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return FutureBuilder<List<OrbitMember>>(
@@ -197,18 +274,6 @@ class _OrbitMembersBarState extends State<OrbitMembersBar> {
                   scrollDirection: Axis.horizontal,
                   child: Row(
                     children: members.map((m) {
-                      final initials = (m.displayName?.isNotEmpty == true
-                              ? m.displayName!
-                              : m.email)
-                          .substring(0, 1)
-                          .toUpperCase();
-                      Color bg = m.isPilot
-                          ? AppColors.teal
-                          : m.isSuspended
-                              ? Colors.red.shade800
-                              : m.isPending
-                                  ? Colors.orange.shade700
-                                  : Colors.blueGrey.shade600;
                       final tooltipName = m.displayName?.isNotEmpty == true
                           ? '${m.displayName}\n${m.email}'
                           : m.email;
@@ -218,22 +283,14 @@ class _OrbitMembersBarState extends State<OrbitMembersBar> {
                           message: '$tooltipName'
                               '${m.isPilot ? '\nPilot' : '\nCo-Pilot'}'
                               '${m.isSuspended ? ' – gesperrt' : ''}'
-                              '${m.isPending ? ' – ausstehend' : ''}',
+                              '${m.isPending ? '\nEinladung noch nicht angenommen' : ''}',
                           child: GestureDetector(
+                            // Der Pilot verwaltet per Tippen, alle anderen
+                            // bekommen die Angaben zum Teilnehmer zu sehen.
                             onTap: isPilot && !m.isPilot
                                 ? () => _manageMember(m)
-                                : null,
-                            child: CircleAvatar(
-                              radius: 13,
-                              backgroundColor: bg,
-                              child: Text(
-                                initials,
-                                style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.bold),
-                              ),
-                            ),
+                                : () => _showMemberInfo(m),
+                            child: _MemberAvatar(member: m),
                           ),
                         ),
                       );
@@ -253,30 +310,98 @@ class _OrbitMembersBarState extends State<OrbitMembersBar> {
                     _reload();
                   },
                 )
-              // Statt einer wortlosen Luecke: die eigene Rolle benennen. Sonst
-              // ist am fehlenden Einladen-Knopf nicht zu erkennen, ob man keine
-              // Rechte hat oder ob etwas nicht funktioniert.
+              // Statt einer wortlosen Luecke: die eigene Rolle benennen und
+              // sagen, wer der Pilot ist. Sonst ist am fehlenden Einladen-Knopf
+              // weder zu erkennen, ob man keine Rechte hat oder ob etwas nicht
+              // funktioniert, noch an wen man sich wenden muss.
               else if (me != null)
-                Tooltip(
-                  message: 'Du bist Co-Pilot dieses Orbits.\n'
-                      'Nur der Pilot kann Co-Piloten einladen und verwalten.',
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: const [
-                      Icon(Icons.badge_outlined,
-                          color: Colors.white38, size: 14),
-                      SizedBox(width: 4),
-                      Text(
-                        'Co-Pilot',
-                        style: TextStyle(color: Colors.white54, fontSize: 11),
-                      ),
-                    ],
-                  ),
-                ),
+                _buildCoPilotHint(members),
             ],
           ),
         );
       },
+    );
+  }
+}
+
+/// Avatar eines Orbit-Teilnehmers.
+///
+/// Der Zustand einer Einladung muss man sehen koennen: Wer eingeladen ist, die
+/// Einladung aber noch nicht angenommen hat, erscheint NICHT als vollwertiger
+/// Teilnehmer. Statt gefuellter Farbe bekommt er auf dem schwarzen Grund der
+/// Leiste nur einen grauen Ring mit grauer Schrift – sichtbar vorhanden, aber
+/// erkennbar noch nicht dabei. Die kleine Uhr macht den Unterschied auch
+/// unabhaengig von Farbe deutlich.
+class _MemberAvatar extends StatelessWidget {
+  final OrbitMember member;
+
+  const _MemberAvatar({required this.member});
+
+  static const double _size = 26;
+
+  @override
+  Widget build(BuildContext context) {
+    final initials = (member.displayName?.isNotEmpty == true
+            ? member.displayName!
+            : member.email)
+        .substring(0, 1)
+        .toUpperCase();
+
+    if (member.isPending) {
+      return SizedBox(
+        width: _size,
+        height: _size,
+        child: Stack(
+          children: [
+            Container(
+              width: _size,
+              height: _size,
+              decoration: BoxDecoration(
+                shape: BoxShape.circle,
+                // Kein Fuellton: Der schwarze Hintergrund der Leiste bleibt
+                // stehen, der Ring setzt die Kontur.
+                border: Border.all(color: Colors.white38, width: 1.5),
+              ),
+              alignment: Alignment.center,
+              child: Text(
+                initials,
+                style: const TextStyle(color: Colors.white38, fontSize: 11),
+              ),
+            ),
+            Positioned(
+              right: 0,
+              bottom: 0,
+              child: Container(
+                width: 12,
+                height: 12,
+                decoration: const BoxDecoration(
+                  shape: BoxShape.circle,
+                  color: Colors.black,
+                ),
+                alignment: Alignment.center,
+                child: const Icon(Icons.schedule,
+                    size: 9, color: Colors.white38),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    final Color background = member.isPilot
+        ? AppColors.teal
+        : member.isSuspended
+            ? Colors.red.shade800
+            : Colors.blueGrey.shade600;
+
+    return CircleAvatar(
+      radius: _size / 2,
+      backgroundColor: background,
+      child: Text(
+        initials,
+        style: const TextStyle(
+            color: Colors.white, fontSize: 11, fontWeight: FontWeight.bold),
+      ),
     );
   }
 }

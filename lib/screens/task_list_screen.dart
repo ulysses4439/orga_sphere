@@ -11,6 +11,7 @@ import '../services/sound_service.dart';
 import '../widgets/notification_bell.dart';
 import '../theme/app_colors.dart';
 import '../utils/date_format.dart';
+import '../utils/field_limits.dart';
 import '../widgets/task_list_item.dart';
 import '../widgets/sphere_detail_content.dart';
 import '../widgets/reminder_picker_dialog.dart';
@@ -37,6 +38,11 @@ class _TaskListScreenState extends State<TaskListScreen>
   String? _selectedOrbitId;
   String? _selectedSphereId;
 
+  /// Offene Einladungen in fremde Orbits. Sie kommen nicht aus dem
+  /// TaskService, weil zu ihnen noch kein Zugriff gehört – erst das Annehmen
+  /// macht den Orbit sichtbar.
+  List<OrbitInvitation> _invitations = [];
+
   static const double _desktopBreakpoint = 800;
   static const Duration _pollInterval = Duration(seconds: 30);
 
@@ -55,11 +61,54 @@ class _TaskListScreenState extends State<TaskListScreen>
       final domains = _taskService.getDomains();
       if (domains.isNotEmpty) _selectedOrbitId = domains.first.id;
       setState(() {});
+      _loadInvitations();
       _pollTimer = Timer.periodic(_pollInterval, (_) {
         _taskService.refresh();
         EventPollService().poll();
+        _loadInvitations();
       });
     });
+  }
+
+  Future<void> _loadInvitations() async {
+    try {
+      final invitations = await ApiService.getInvitations();
+      if (mounted) setState(() => _invitations = invitations);
+    } catch (_) {
+      // Einladungen sind Beiwerk: Ein Fehler hier darf die Orbit-Ansicht nicht
+      // blockieren. Der nächste Durchlauf versucht es erneut.
+    }
+  }
+
+  Future<void> _respondToInvitation(
+      OrbitInvitation invitation, bool accept) async {
+    try {
+      if (accept) {
+        await ApiService.acceptInvitation(invitation.id);
+        // Der Orbit ist erst ab jetzt zugänglich und muss nachgeladen werden.
+        await _taskService.refresh();
+      } else {
+        await ApiService.declineInvitation(invitation.id);
+      }
+      if (!mounted) return;
+      setState(() {
+        _invitations =
+            _invitations.where((i) => i.id != invitation.id).toList();
+        if (accept) _selectedOrbitId = invitation.orbitId;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(accept
+              ? 'Du bist jetzt Co-Pilot von „${invitation.orbitName}"'
+              : 'Einladung zu „${invitation.orbitName}" abgelehnt'),
+        ),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Fehler: $e')));
+      }
+    }
   }
 
   @override
@@ -85,6 +134,7 @@ class _TaskListScreenState extends State<TaskListScreen>
       _reminderService.checkNow();
       _taskService.refresh();
       EventPollService().poll();
+      _loadInvitations();
     }
   }
 
@@ -177,6 +227,80 @@ class _TaskListScreenState extends State<TaskListScreen>
   String _formatDateTime(DateTime d) => formatDateTime(d);
 
   // ──────────────────────────────────────────────
+  // EINLADUNGEN
+  // ──────────────────────────────────────────────
+
+  /// Offene Einladungen als Banner über der Orbit-Ansicht. Bewusst hier und
+  /// nicht in der Glocke: Eine Einladung ist keine Meldung zum Wegklicken,
+  /// sondern verlangt eine Entscheidung.
+  Widget _buildInvitationBanners() {
+    if (_invitations.isEmpty) return const SizedBox.shrink();
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children:
+          _invitations.map((inv) => _buildInvitationBanner(inv)).toList(),
+    );
+  }
+
+  Widget _buildInvitationBanner(OrbitInvitation invitation) {
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C2E),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: AppColors.teal, width: 1),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 14,
+            height: 14,
+            decoration: BoxDecoration(
+                color: invitation.orbitColor, shape: BoxShape.circle),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  'Einladung: „${invitation.orbitName}"',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 14,
+                    fontWeight: FontWeight.w600,
+                  ),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                Text(
+                  invitation.pilotName == null
+                      ? 'Du wurdest als Co-Pilot eingeladen.'
+                      : 'Von ${invitation.pilotName} als Co-Pilot eingeladen.',
+                  style: const TextStyle(color: Colors.white54, fontSize: 12),
+                  overflow: TextOverflow.ellipsis,
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 8),
+          TextButton(
+            onPressed: () => _respondToInvitation(invitation, false),
+            child: const Text('Ablehnen',
+                style: TextStyle(color: Colors.white54)),
+          ),
+          const SizedBox(width: 4),
+          FilledButton(
+            onPressed: () => _respondToInvitation(invitation, true),
+            child: const Text('Annehmen'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  // ──────────────────────────────────────────────
   // DESKTOP
   // ──────────────────────────────────────────────
 
@@ -207,36 +331,45 @@ class _TaskListScreenState extends State<TaskListScreen>
             return const Center(child: CircularProgressIndicator());
           }
           if (snapshot.hasError) return _buildErrorView(snapshot.error);
-          return Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
+          return Column(
             children: [
-              _buildOrbitSidebar(),
-              const VerticalDivider(width: 1, thickness: 1),
-              Expanded(child: _buildDesktopSpherePanel()),
-              if (_selectedSphereId != null) ...[
-                const VerticalDivider(width: 1, thickness: 1),
-                SizedBox(
-                  width: 420,
-                  child: SphereDetailContent(
-                    key: ValueKey(_selectedSphereId),
-                    taskId: _selectedSphereId!,
-                    onDeleted: () => setState(() => _selectedSphereId = null),
-                    onClose: () => setState(() => _selectedSphereId = null),
-                    onChanged: () => setState(() {}),
-                    onMarkedDone: () => setState(() {
-                      _tabController.animateTo(0);
-                      _selectedSphereId = null;
-                    }),
-                    onReopened: () => setState(() {
-                      _tabController.animateTo(0);
-                    }),
-                  ),
-                ),
-              ],
+              _buildInvitationBanners(),
+              Expanded(child: _buildDesktopWorkspace()),
             ],
           );
         },
       ),
+    );
+  }
+
+  Widget _buildDesktopWorkspace() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        _buildOrbitSidebar(),
+        const VerticalDivider(width: 1, thickness: 1),
+        Expanded(child: _buildDesktopSpherePanel()),
+        if (_selectedSphereId != null) ...[
+          const VerticalDivider(width: 1, thickness: 1),
+          SizedBox(
+            width: 420,
+            child: SphereDetailContent(
+              key: ValueKey(_selectedSphereId),
+              taskId: _selectedSphereId!,
+              onDeleted: () => setState(() => _selectedSphereId = null),
+              onClose: () => setState(() => _selectedSphereId = null),
+              onChanged: () => setState(() {}),
+              onMarkedDone: () => setState(() {
+                _tabController.animateTo(0);
+                _selectedSphereId = null;
+              }),
+              onReopened: () => setState(() {
+                _tabController.animateTo(0);
+              }),
+            ),
+          ),
+        ],
+      ],
     );
   }
 
@@ -758,6 +891,7 @@ class _TaskListScreenState extends State<TaskListScreen>
             style: const TextStyle(color: Colors.white38, fontSize: 11),
           ),
         ),
+        _buildInvitationBanners(),
         if (missed.isNotEmpty) _buildMobileMissedBanner(missed),
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
@@ -882,32 +1016,48 @@ class _TaskListScreenState extends State<TaskListScreen>
               ),
             ),
             const Divider(color: Colors.white12, height: 8),
-            ListTile(
-              leading: const Icon(Icons.person_add_outlined, color: Colors.white70),
-              title: const Text('Co-Pilot einladen',
-                  style: TextStyle(color: Colors.white)),
-              onTap: () {
-                Navigator.of(ctx).pop();
-                _showInviteCoPilotDialog(domain);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.edit_outlined, color: Colors.white70),
-              title: const Text('Umbenennen',
-                  style: TextStyle(color: Colors.white)),
-              onTap: () {
-                Navigator.of(ctx).pop();
-                _showRenameOrbitDialog(domain);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline, color: Colors.red),
-              title: const Text('Löschen', style: TextStyle(color: Colors.red)),
-              onTap: () {
-                Navigator.of(ctx).pop();
-                _showDeleteOrbitDialog(domain);
-              },
-            ),
+            // Verwaltung nur für den Piloten. Co-Piloten bekommen statt der
+            // Aktionen den Grund zu sehen – ein leeres Menü wäre schlechter als
+            // eine Erklärung. Wer der Pilot ist, zeigt die Teilnehmerleiste im
+            // Orbit selbst.
+            if (domain.isPilot) ...[
+              ListTile(
+                leading: const Icon(Icons.person_add_outlined, color: Colors.white70),
+                title: const Text('Co-Pilot einladen',
+                    style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  _showInviteCoPilotDialog(domain);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.edit_outlined, color: Colors.white70),
+                title: const Text('Umbenennen',
+                    style: TextStyle(color: Colors.white)),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  _showRenameOrbitDialog(domain);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.delete_outline, color: Colors.red),
+                title: const Text('Löschen', style: TextStyle(color: Colors.red)),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  _showDeleteOrbitDialog(domain);
+                },
+              ),
+            ] else
+              const ListTile(
+                leading: Icon(Icons.badge_outlined, color: Colors.white38),
+                title: Text('Du bist Co-Pilot',
+                    style: TextStyle(color: Colors.white70)),
+                subtitle: Text(
+                  'Nur der Pilot kann diesen Orbit umbenennen, löschen und '
+                  'Co-Piloten einladen.',
+                  style: TextStyle(color: Colors.white38, fontSize: 12),
+                ),
+              ),
             const SizedBox(height: 8),
           ],
         ),
@@ -1092,7 +1242,14 @@ class _InlineSphereCreatorState extends State<_InlineSphereCreator> {
         _frequency = RecurrenceFrequency.none;
       });
       widget.onCreated();
-    } catch (_) {}
+    } catch (e) {
+      // Frueher wurde der Fehler verschluckt: Das Anlegen scheiterte still,
+      // die Eingabe blieb stehen und niemand erfuhr den Grund.
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Fehler: $e')));
+      }
+    }
   }
 
   @override
@@ -1109,6 +1266,8 @@ class _InlineSphereCreatorState extends State<_InlineSphereCreator> {
               controller: _ctrl,
               focusNode: _focusNode,
               style: const TextStyle(color: Colors.black87, fontSize: 14),
+              maxLength: kSphereTitleMaxLength,
+              buildCounter: nearLimitCounter,
               decoration: InputDecoration(
                 hintText: 'Aufgabe hinzufügen',
                 hintStyle: TextStyle(
@@ -1235,6 +1394,8 @@ class _OrbitRenameDialogState extends State<_OrbitRenameDialog> {
       content: TextField(
         controller: _ctrl,
         autofocus: true,
+        maxLength: kOrbitNameMaxLength,
+        buildCounter: nearLimitCounter,
         decoration: const InputDecoration(labelText: 'Name'),
         onSubmitted: (_) => _submit(),
       ),
@@ -1355,37 +1516,41 @@ class _OrbitTileState extends State<_OrbitTile> {
                       ),
                     ),
                   ),
-                PopupMenuButton<String>(
-                  icon: const Icon(Icons.more_vert,
-                      color: Colors.white38, size: 18),
-                  padding: EdgeInsets.zero,
-                  color: const Color(0xFF1C1C2E),
-                  onSelected: (action) {
-                    if (action == 'rename') widget.onRename();
-                    if (action == 'delete') widget.onDelete();
-                    if (action == 'invite') widget.onInviteCoPilot();
-                  },
-                  itemBuilder: (_) => [
-                    const PopupMenuItem(
-                      value: 'invite',
-                      child: Row(children: [
-                        Icon(Icons.person_add_outlined, color: Colors.white70, size: 18),
-                        SizedBox(width: 8),
-                        Text('Co-Pilot einladen', style: TextStyle(color: Colors.white)),
-                      ]),
-                    ),
-                    const PopupMenuItem(
-                      value: 'rename',
-                      child: Text('Umbenennen',
-                          style: TextStyle(color: Colors.white)),
-                    ),
-                    const PopupMenuItem(
-                      value: 'delete',
-                      child: Text('Löschen',
-                          style: TextStyle(color: Colors.red)),
-                    ),
-                  ],
-                ),
+                // Einladen, Umbenennen und Löschen stehen nur dem Piloten zu.
+                // Für Co-Piloten entfällt das Menü ganz, statt Einträge
+                // anzubieten, die der Server danach mit 403 abweist.
+                if (widget.domain.isPilot)
+                  PopupMenuButton<String>(
+                    icon: const Icon(Icons.more_vert,
+                        color: Colors.white38, size: 18),
+                    padding: EdgeInsets.zero,
+                    color: const Color(0xFF1C1C2E),
+                    onSelected: (action) {
+                      if (action == 'rename') widget.onRename();
+                      if (action == 'delete') widget.onDelete();
+                      if (action == 'invite') widget.onInviteCoPilot();
+                    },
+                    itemBuilder: (_) => [
+                      const PopupMenuItem(
+                        value: 'invite',
+                        child: Row(children: [
+                          Icon(Icons.person_add_outlined, color: Colors.white70, size: 18),
+                          SizedBox(width: 8),
+                          Text('Co-Pilot einladen', style: TextStyle(color: Colors.white)),
+                        ]),
+                      ),
+                      const PopupMenuItem(
+                        value: 'rename',
+                        child: Text('Umbenennen',
+                            style: TextStyle(color: Colors.white)),
+                      ),
+                      const PopupMenuItem(
+                        value: 'delete',
+                        child: Text('Löschen',
+                            style: TextStyle(color: Colors.red)),
+                      ),
+                    ],
+                  ),
               ],
             ),
             onTap: widget.onSelect,

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/task_service.dart';
+import '../utils/field_limits.dart';
 
 /// Bausteine für Orbits im Einkaufslisten-Modus ([TaskDomain.isShoppingList]).
 ///
@@ -79,6 +80,8 @@ class _SimpleListQuickAddState extends State<SimpleListQuickAdd> {
               focusNode: _focusNode,
               textCapitalization: TextCapitalization.sentences,
               textInputAction: TextInputAction.done,
+              maxLength: kSphereTitleMaxLength,
+              buildCounter: nearLimitCounter,
               onSubmitted: (_) => _submit(),
               decoration: const InputDecoration(
                 hintText: 'Position hinzufügen…',
@@ -124,6 +127,8 @@ Future<bool> showSimpleListItemDialog(BuildContext context, Task task) async {
         controller: controller,
         autofocus: true,
         textCapitalization: TextCapitalization.sentences,
+        maxLength: kSphereTitleMaxLength,
+        buildCounter: nearLimitCounter,
         decoration: const InputDecoration(border: OutlineInputBorder()),
         onSubmitted: (_) => Navigator.pop(ctx, 'save'),
       ),

@@ -54,6 +54,36 @@ sql.connect(config)
   .catch(err => console.error('Startup DB connect failed (will retry on first request):', err.message));
 
 // -----------------------------------------------------------------------
+// Feldlaengen
+//
+// Die Werte spiegeln die Spaltenbreiten aus db/schema.sql und muessen mit
+// lib/utils/field_limits.dart uebereinstimmen. Ohne diese Pruefung quittiert
+// SQL Server zu lange Texte mit "String or binary data would be truncated" –
+// ein 500er, aus dem in der App keine brauchbare Meldung wird.
+// -----------------------------------------------------------------------
+
+const FIELD_LIMITS = {
+  sphereTitle:       200,   // Task.title
+  sphereDescription: 1000,  // Task.description
+  orbitName:         100,   // TaskDomain.name
+  orbitDescription:  500,   // TaskDomain.description
+  logText:           1000,  // TaskLogEntry.text
+  displayName:       200,   // AppUser.displayName
+};
+
+/// Antwortet mit 400 und gibt true zurueck, wenn `value` zu lang ist.
+/// Aufrufer beenden dann mit `return`.
+function rejectIfTooLong(res, label, value, max) {
+  if (typeof value !== 'string') return false;
+  const length = value.trim().length;
+  if (length <= max) return false;
+  res.status(400).json({
+    error: `${label} darf höchstens ${max} Zeichen lang sein (aktuell ${length}).`,
+  });
+  return true;
+}
+
+// -----------------------------------------------------------------------
 // E-Mail
 // -----------------------------------------------------------------------
 
@@ -278,7 +308,104 @@ async function requireMember(req, res, next) {
 // Recurrence
 // -----------------------------------------------------------------------
 
+// Zeitzone, in der Erinnerungen "nach Wanduhr" gelten. Ueber die
+// Umgebungsvariable APP_TIMEZONE aenderbar, falls die App einmal ausserhalb
+// Deutschlands laufen soll. Ein fester Wert ist hier bewusst gewaehlt: Die
+// Zeitzone des einzelnen Nutzers wird bislang nirgends gespeichert.
+const APP_TIMEZONE = process.env.APP_TIMEZONE || 'Europe/Berlin';
+
+// Zerlegt einen Zeitpunkt in das, was in der Zielzone auf der Wanduhr steht.
+function getZonedParts(date, timeZone) {
+  const formatter = new Intl.DateTimeFormat('en-CA', {
+    timeZone,
+    hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit', second: '2-digit',
+  });
+  const parts = {};
+  for (const part of formatter.formatToParts(date)) {
+    if (part.type !== 'literal') parts[part.type] = Number(part.value);
+  }
+  // Mitternacht liefert je nach Node-Version 24 statt 0.
+  if (parts.hour === 24) parts.hour = 0;
+  return parts;
+}
+
+// Abstand der Zielzone zu UTC in Minuten, gueltig fuer genau diesen Zeitpunkt
+// (Sommerzeit +120, Winterzeit +60 fuer Deutschland).
+function getZoneOffsetMinutes(date, timeZone) {
+  const p = getZonedParts(date, timeZone);
+  const asIfUtc = Date.UTC(p.year, p.month - 1, p.day, p.hour, p.minute, p.second);
+  const whole = Math.floor(date.getTime() / 1000) * 1000; // Millisekunden weg
+  return (asIfUtc - whole) / 60000;
+}
+
+// Rechnet eine Wanduhrzeit der Zielzone zurueck in einen echten Zeitpunkt.
+//
+// Der Offset haengt vom Ergebnis ab und das Ergebnis vom Offset. Ausserhalb der
+// Umstellungsnaechte loest sich das nach einem Schritt auf. In den beiden
+// Sonderfaellen gibt es keine saubere Loesung, deshalb werden sie ausdruecklich
+// entschieden statt sich auf eine Schleife zu verlassen (die pendelt dort
+// zwischen zwei Werten):
+//   * Uebersprungene Stunde (Fruehjahr, 02:00 -> 03:00): Die Wanduhrzeit gibt
+//     es nicht. Die Erinnerung rutscht um die fehlende Stunde nach hinten,
+//     also 02:30 -> 03:30. Nach vorn waere sie vor dem gewuenschten Zeitpunkt.
+//   * Doppelte Stunde (Herbst, 03:00 -> 02:00): Die Wanduhrzeit gibt es
+//     zweimal. Es gewinnt der erste Durchgang – die Erinnerung kommt also
+//     eher statt spaeter.
+function zonedPartsToUtc(parts, timeZone) {
+  const naive = Date.UTC(
+    parts.year, parts.month - 1, parts.day,
+    parts.hour, parts.minute, parts.second,
+  );
+
+  // Ueberlaeufe wie "Tag 35" hat Date.UTC schon aufgeloest – ab hier zaehlt die
+  // bereinigte Wanduhrzeit.
+  const target = new Date(naive);
+  const matchesTarget = (timestamp) => {
+    const p = getZonedParts(new Date(timestamp), timeZone);
+    return p.year === target.getUTCFullYear()
+        && p.month === target.getUTCMonth() + 1
+        && p.day === target.getUTCDate()
+        && p.hour === target.getUTCHours()
+        && p.minute === target.getUTCMinutes();
+  };
+
+  // Alle Offsets, die rund um den gesuchten Zeitpunkt gelten koennen. Ein Tag
+  // davor und danach umschliesst die Umstellungsnacht sicher; ausserhalb davon
+  // sind alle drei gleich und es bleibt bei einem einzigen Kandidaten.
+  const offsets = new Set([
+    getZoneOffsetMinutes(new Date(naive - 86400000), timeZone),
+    getZoneOffsetMinutes(target, timeZone),
+    getZoneOffsetMinutes(new Date(naive + 86400000), timeZone),
+  ]);
+  const candidates = [...offsets].map((offset) => naive - offset * 60000);
+
+  const valid = candidates.filter(matchesTarget);
+  if (valid.length > 0) return new Date(Math.min(...valid));
+  return new Date(Math.max(...candidates));
+}
+
+// Einmal beim Start protokollieren, damit in den Azure-Logs sofort sichtbar
+// ist, nach welcher Uhr Erinnerungen weitergezaehlt werden.
+console.log(
+  `Erinnerungen rechnen in Zeitzone ${APP_TIMEZONE} ` +
+  `(derzeit UTC+${getZoneOffsetMinutes(new Date(), APP_TIMEZONE) / 60}h)`
+);
+
+// Verschiebt ein Datum um genau einen Wiederholungsrhythmus.
+//
+// Fuer Start- und Faelligkeitsdatum. Die liegen als reine Datumswerte auf
+// 00:00:00 (siehe db/schema.sql), da zaehlen nur ganze Tage – die
+// Zeitumstellung spielt keine Rolle und wuerde die Mitternacht sogar
+// verschieben.
+//
+// Der Null-Fall ist Absicht und wichtig: Faelligkeit und Erinnerung sind
+// optional. Ohne die Abfrage macht `new Date(null)` daraus den 01.01.1970 –
+// die Folge-Sphere truege dann ein Datum aus der Steinzeit und stuende sofort
+// als ueberfaellig da.
 function nextDate(current, frequency, interval) {
+  if (!current) return null;
   const d = new Date(current);
   switch (frequency) {
     case 'daily':   d.setDate(d.getDate() + interval); break;
@@ -287,6 +414,28 @@ function nextDate(current, frequency, interval) {
     case 'yearly':  d.setFullYear(d.getFullYear() + interval); break;
   }
   return d;
+}
+
+// Verschiebt eine ERINNERUNG um einen Wiederholungsrhythmus.
+//
+// Anders als bei Start und Faelligkeit zaehlt hier die Uhrzeit, und die soll
+// bleiben, wo sie ist: 06:30 Uhr bleibt 06:30 Uhr – auch wenn zwischen den
+// beiden Terminen die Uhr umgestellt wird. Deshalb wird nicht in UTC
+// gerechnet (das ergaebe exakt 72 Stunden und damit nach der Umstellung
+// ploetzlich 05:30 Uhr), sondern auf der Wanduhr der Zielzone.
+function nextReminderDate(current, frequency, interval, timeZone = APP_TIMEZONE) {
+  if (!current) return null;
+  const parts = getZonedParts(new Date(current), timeZone);
+  switch (frequency) {
+    case 'daily':   parts.day += interval; break;
+    case 'weekly':  parts.day += 7 * interval; break;
+    case 'monthly': parts.month += interval; break;
+    case 'yearly':  parts.year += interval; break;
+    default: return new Date(current);
+  }
+  // Ueberlaeufe (Tag 35, Monat 13) rechnet Date.UTC selbst um – genau wie
+  // setDate/setMonth in nextDate, damit beide gleich rollen.
+  return zonedPartsToUtc(parts, timeZone);
 }
 
 async function createNextCapsuleIfNeeded(p, task) {
@@ -300,6 +449,21 @@ async function createNextCapsuleIfNeeded(p, task) {
 
   const nextStart = nextDate(task.startDate, task.recurrenceFrequency, task.recurrenceInterval);
   const nextDue   = nextDate(task.dueDate,   task.recurrenceFrequency, task.recurrenceInterval);
+
+  // Die Erinnerung gehoert zur Sphere und wandert mit – um genau denselben
+  // Rhythmus versetzt wie Start und Faelligkeit. Erinnerung am 12.08. um 06:30
+  // bei Wiederholung "alle 3 Tage" ergibt also den 15.08. um 06:30.
+  // Ohne das fiel die Erinnerung nach dem ersten Durchlauf stillschweigend weg,
+  // obwohl die Wiederholung weiterlief.
+  //
+  // nextReminderDate statt nextDate: Die Uhrzeit soll die Zeitumstellung
+  // ueberleben (siehe dort).
+  //
+  // reminderEmailSentAt wird bewusst NICHT uebernommen (Spaltendefault NULL),
+  // sonst haette der Scheduler die neue Erinnerung als bereits verschickt
+  // angesehen und nie eine Mail geschickt.
+  const nextReminder = nextReminderDate(task.reminderAt, task.recurrenceFrequency, task.recurrenceInterval);
+
   const nextId    = uuidv4();
 
   const result = await p.request()
@@ -309,15 +473,16 @@ async function createNextCapsuleIfNeeded(p, task) {
     .input('description',          sql.NVarChar,  task.description)
     .input('startDate',            sql.DateTime2, nextStart)
     .input('dueDate',              sql.DateTime2, nextDue)
+    .input('reminderAt',           sql.DateTime2, nextReminder)
     .input('recurrenceFrequency',  sql.NVarChar,  task.recurrenceFrequency)
     .input('recurrenceInterval',   sql.Int,       task.recurrenceInterval)
     .input('previousTaskId',       sql.NVarChar,  task.id)
     .input('assignedToMemberId',   sql.NVarChar,  task.assignedToMemberId || null)
     .query(`INSERT INTO Task
-              (id, domainId, title, description, startDate, dueDate,
+              (id, domainId, title, description, startDate, dueDate, reminderAt,
                recurrenceFrequency, recurrenceInterval, status, previousTaskId, assignedToMemberId)
             OUTPUT INSERTED.*
-            VALUES (@id, @domainId, @title, @description, @startDate, @dueDate,
+            VALUES (@id, @domainId, @title, @description, @startDate, @dueDate, @reminderAt,
                     @recurrenceFrequency, @recurrenceInterval, 'open', @previousTaskId, @assignedToMemberId)`);
 
   return result.recordset[0];
@@ -422,6 +587,7 @@ app.get('/auth/me', requireAuth, async (req, res) => {
 
 app.patch('/auth/profile', requireAuth, async (req, res) => {
   const { displayName, email } = req.body;
+  if (rejectIfTooLong(res, 'Der Name', displayName, FIELD_LIMITS.displayName)) return;
   const userId = req.user.userId;
   try {
     const p = await getPool();
@@ -661,6 +827,69 @@ app.get('/invite', async (req, res) => {
       return res.status(404).send('<h2>Dieser Einladungslink ist ungültig oder wurde bereits verwendet.</h2>');
     }
     const invite = result.recordset[0];
+
+    // Hat die eingeladene Person schon ein Konto, waere ein Registrierformular
+    // falsch. Sie bestaetigt stattdessen mit ihrem Passwort – das beweist, dass
+    // wirklich sie am Werk ist und nicht jemand, an den die Mail weitergeleitet
+    // wurde.
+    const accountResult = await p.request()
+      .input('email', sql.NVarChar, invite.email)
+      .query('SELECT id FROM AppUser WHERE email = @email');
+    const hasAccount = accountResult.recordset.length > 0;
+
+    if (hasAccount) {
+      res.setHeader('Content-Type', 'text/html; charset=utf-8');
+      return res.send(`<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OrgaSphere – Einladung annehmen</title>
+  <style>
+    body { font-family: sans-serif; max-width: 480px; margin: 60px auto; padding: 0 20px; color: #333; }
+    h1 { color: #512DA8; }
+    input { width: 100%; padding: 10px; margin: 8px 0 16px; border: 1px solid #ccc; border-radius: 6px; box-sizing: border-box; font-size: 16px; }
+    button { background: #512DA8; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 16px; cursor: pointer; width: 100%; }
+    button:hover { background: #4527A0; }
+    .hint { color: #666; font-size: 14px; margin-top: 8px; }
+    .error { color: #c62828; margin-top: 12px; }
+    .success { color: #2e7d32; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>OrgaSphere</h1>
+  <p>Du wurdest als <strong>Co-Pilot</strong> zum Orbit <strong>"${invite.orbitName}"</strong> eingeladen.</p>
+  <p>Du kannst die Einladung auch direkt in der OrgaSphere-App annehmen. Hier im Browser geht es mit deinem Passwort:</p>
+  <form id="form">
+    <input type="email" id="email" value="${invite.email}" readonly style="background:#f5f5f5">
+    <input type="password" id="password" placeholder="Dein OrgaSphere-Passwort" required>
+    <button type="submit">Einladung annehmen</button>
+  </form>
+  <div id="msg"></div>
+  <script>
+    document.getElementById('form').addEventListener('submit', async e => {
+      e.preventDefault();
+      const msg = document.getElementById('msg');
+      const res = await fetch('/invite', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: '${token}', password: document.getElementById('password').value })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        msg.className = 'success';
+        msg.textContent = 'Einladung angenommen! Der Orbit steht dir jetzt in der OrgaSphere-App zur Verfügung.';
+        document.getElementById('form').style.display = 'none';
+      } else {
+        msg.className = 'error';
+        msg.textContent = data.error || 'Einladung konnte nicht angenommen werden.';
+      }
+    });
+  </script>
+</body>
+</html>`);
+    }
+
     res.setHeader('Content-Type', 'text/html; charset=utf-8');
     res.send(`<!DOCTYPE html>
 <html lang="de">
@@ -746,6 +975,16 @@ app.post('/invite', async (req, res) => {
 
     let userId;
     if (existing.recordset.length > 0) {
+      // Konto vorhanden: Das Passwort dient hier nicht zum Anlegen, sondern als
+      // Nachweis. Ohne diese Pruefung koennte jeder, der den Link in die Finger
+      // bekommt, die Einladung an ihrer Stelle annehmen.
+      const account = await p.request()
+        .input('email', sql.NVarChar, invite.email)
+        .query('SELECT id, passwordHash FROM AppUser WHERE email = @email');
+      const valid = await bcrypt.compare(password, account.recordset[0].passwordHash);
+      if (!valid) {
+        return res.status(401).json({ error: 'Passwort falsch' });
+      }
       userId = existing.recordset[0].id;
     } else {
       const passwordHash = await bcrypt.hash(password, 12);
@@ -775,15 +1014,128 @@ app.post('/invite', async (req, res) => {
 });
 
 // -----------------------------------------------------------------------
+// Offene Einladungen des angemeldeten Nutzers
+//
+// Eine Einladung ist eine OrbitMember-Zeile mit status = 'pending'. Sie gibt
+// noch keinerlei Zugriff – jede Abfrage von Orbits, Spheres, Push und
+// Erinnerungsmails filtert auf status = 'active'.
+// -----------------------------------------------------------------------
+
+// Die eigene, aktuelle Adresse aus der Datenbank. Die im Token kann veraltet
+// sein, wenn die E-Mail nach dem Login geaendert wurde.
+async function getCurrentEmail(p, userId, fallback) {
+  try {
+    const row = await p.request()
+      .input('userId', sql.NVarChar, userId)
+      .query('SELECT email FROM AppUser WHERE id = @userId');
+    return row.recordset[0]?.email || fallback;
+  } catch {
+    return fallback;
+  }
+}
+
+app.get('/invitations', requireAuth, async (req, res) => {
+  try {
+    const p = await getPool();
+    const email = await getCurrentEmail(p, req.user.userId, req.user.email);
+    const result = await p.request()
+      .input('userId', sql.NVarChar, req.user.userId)
+      .input('email',  sql.NVarChar, email)
+      .query(`SELECT om.id, om.orbitId, om.invitedAt,
+                     td.name AS orbitName, td.color AS orbitColor,
+                     (SELECT TOP 1 COALESCE(NULLIF(au.displayName, ''), pm.email)
+                        FROM OrbitMember pm
+                        LEFT JOIN AppUser au ON au.id = pm.userId
+                       WHERE pm.orbitId = om.orbitId
+                         AND pm.role = 'pilot' AND pm.status = 'active') AS pilotName
+              FROM OrbitMember om
+              JOIN TaskDomain td ON td.id = om.orbitId
+              WHERE om.status = 'pending'
+                AND (om.userId = @userId OR om.email = @email)
+              ORDER BY om.invitedAt DESC`);
+    res.json(result.recordset);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Die Einladung muss dem Aufrufer gehoeren – geprueft ueber userId ODER
+// E-Mail, denn bei Eingeladenen ohne Konto steht die userId noch nicht fest.
+async function loadOwnInvitation(p, memberId, userId, email) {
+  const result = await p.request()
+    .input('id',     sql.NVarChar, memberId)
+    .input('userId', sql.NVarChar, userId)
+    .input('email',  sql.NVarChar, email)
+    .query(`SELECT om.*, td.name AS orbitName
+            FROM OrbitMember om
+            JOIN TaskDomain td ON td.id = om.orbitId
+            WHERE om.id = @id AND om.status = 'pending'
+              AND (om.userId = @userId OR om.email = @email)`);
+  return result.recordset[0] || null;
+}
+
+app.post('/invitations/:id/accept', requireAuth, async (req, res) => {
+  try {
+    const p = await getPool();
+    const email = await getCurrentEmail(p, req.user.userId, req.user.email);
+    const invite = await loadOwnInvitation(p, req.params.id, req.user.userId, email);
+    if (!invite) return res.status(404).json({ error: 'Einladung nicht gefunden' });
+
+    await p.request()
+      .input('id',     sql.NVarChar, invite.id)
+      .input('userId', sql.NVarChar, req.user.userId)
+      .query(`UPDATE OrbitMember
+              SET userId = @userId, status = 'active',
+                  joinedAt = GETUTCDATE(), inviteToken = NULL
+              WHERE id = @id`);
+
+    res.json({ success: true, orbitId: invite.orbitId, orbitName: invite.orbitName });
+
+    // Das Team erfaehrt, dass jemand dazugekommen ist.
+    const actorName = await resolveActorName(p, req.user.userId, email);
+    await emitOrbitEvent(p, {
+      orbitId: invite.orbitId, actorUserId: req.user.userId, actorName,
+      type: 'member_joined', orbitName: invite.orbitName,
+      body: `${actorName} ist „${invite.orbitName}" als Co-Pilot beigetreten.`,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/invitations/:id/decline', requireAuth, async (req, res) => {
+  try {
+    const p = await getPool();
+    const email = await getCurrentEmail(p, req.user.userId, req.user.email);
+    const invite = await loadOwnInvitation(p, req.params.id, req.user.userId, email);
+    if (!invite) return res.status(404).json({ error: 'Einladung nicht gefunden' });
+
+    // Zeile loeschen statt auf 'declined' setzen: So kann der Pilot dieselbe
+    // Person spaeter erneut einladen, ohne an der Doppelpruefung zu scheitern.
+    await p.request()
+      .input('id', sql.NVarChar, invite.id)
+      .query('DELETE FROM OrbitMember WHERE id = @id');
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// -----------------------------------------------------------------------
 // Domains (Orbits)
 // -----------------------------------------------------------------------
 
 app.get('/domains', requireAuth, async (req, res) => {
   try {
     const p = await getPool();
+    // myRole: die eigene Rolle in diesem Orbit. Die App blendet danach die
+    // Aktionen aus, die nur dem Piloten zustehen (Umbenennen, Loeschen,
+    // Einladen). Die Rechte selbst haengen NICHT daran – die prueft weiterhin
+    // requirePilot am jeweiligen Endpunkt.
     const result = await p.request()
       .input('userId', sql.NVarChar, req.user.userId)
-      .query(`SELECT d.*
+      .query(`SELECT d.*, om.role AS myRole
               FROM TaskDomain d
               JOIN OrbitMember om ON om.orbitId = d.id
               WHERE om.userId = @userId AND om.status = 'active'`);
@@ -795,6 +1147,8 @@ app.get('/domains', requireAuth, async (req, res) => {
 
 app.post('/domains', requireAuth, async (req, res) => {
   const { name, description, color, isShoppingList } = req.body;
+  if (rejectIfTooLong(res, 'Der Name', name, FIELD_LIMITS.orbitName)) return;
+  if (rejectIfTooLong(res, 'Die Beschreibung', description, FIELD_LIMITS.orbitDescription)) return;
   const id = uuidv4();
   try {
     const p = await getPool();
@@ -817,7 +1171,9 @@ app.post('/domains', requireAuth, async (req, res) => {
       .query(`INSERT INTO OrbitMember (id, orbitId, userId, email, role, status, joinedAt)
               VALUES (@id, @orbitId, @userId, @email, 'pilot', 'active', GETUTCDATE())`);
 
-    res.json(result.recordset[0]);
+    // Wer anlegt, ist Pilot – analog zu GET /domains mitliefern, damit die App
+    // den neuen Orbit sofort mit den richtigen Aktionen zeichnet.
+    res.json({ ...result.recordset[0], myRole: 'pilot' });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -839,10 +1195,14 @@ app.patch('/domains/:id', requireAuth, requireMember, async (req, res) => {
   }
 });
 
-app.patch('/domains/:id/name', requireAuth, requireMember, async (req, res) => {
+// Umbenennen ist Pilotensache. Der Orbit-Name taucht in Einladungsmails,
+// Erinnerungen und Team-Meldungen aller Mitglieder auf – ein Co-Pilot soll ihn
+// nicht unter allen anderen wegziehen koennen.
+app.patch('/domains/:id/name', requireAuth, requirePilot, async (req, res) => {
   const { id } = req.params;
   const { name } = req.body;
   if (!name?.trim()) return res.status(400).json({ error: 'Name required' });
+  if (rejectIfTooLong(res, 'Der Name', name, FIELD_LIMITS.orbitName)) return;
   try {
     const p = await getPool();
     const result = await p.request()
@@ -949,26 +1309,39 @@ app.post('/domains/:id/members', requireAuth, requirePilot, async (req, res) => 
     const memberId = uuidv4();
 
     if (userResult.recordset.length > 0) {
-      // Nutzer existiert → direkt als aktiver Co-Pilot hinzufügen
+      // Nutzer existiert → trotzdem nur EINLADEN, nicht sofort aufnehmen.
+      // Sonst steht jemand als vollwertiger Teilnehmer in der Leiste, der von
+      // seiner Mitgliedschaft noch gar nichts weiss.
+      //
+      // userId wird schon jetzt gesetzt, damit die App die Einladung beim
+      // naechsten Start zuverlaessig findet – auch wenn die Person ihre
+      // E-Mail-Adresse zwischenzeitlich aendert. Zugriff verschafft das nicht:
+      // Orbits, Spheres, Push und Erinnerungsmails haengen ausnahmslos an
+      // status = 'active'.
       const existingUserId = userResult.recordset[0].id;
-      await p.request()
-        .input('id',       sql.NVarChar,  memberId)
-        .input('orbitId',  sql.NVarChar,  orbitId)
-        .input('userId',   sql.NVarChar,  existingUserId)
-        .input('email',    sql.NVarChar,  inviteEmail)
-        .query(`INSERT INTO OrbitMember (id, orbitId, userId, email, role, status, invitedAt, joinedAt)
-                VALUES (@id, @orbitId, @userId, @email, 'copilot', 'active', GETUTCDATE(), GETUTCDATE())`);
+      const inviteToken = uuidv4();
+      const baseUrl = process.env.APP_BASE_URL || `https://orga-sphere-api-dev-f5a0dtenanhefwb2.westeurope-01.azurewebsites.net`;
+      const inviteLink = `${baseUrl}/invite?token=${inviteToken}`;
 
-      // Benachrichtigungs-E-Mail
+      await p.request()
+        .input('id',          sql.NVarChar,  memberId)
+        .input('orbitId',     sql.NVarChar,  orbitId)
+        .input('userId',      sql.NVarChar,  existingUserId)
+        .input('email',       sql.NVarChar,  inviteEmail)
+        .input('inviteToken', sql.NVarChar,  inviteToken)
+        .query(`INSERT INTO OrbitMember (id, orbitId, userId, email, role, status, inviteToken, invitedAt)
+                VALUES (@id, @orbitId, @userId, @email, 'copilot', 'pending', @inviteToken, GETUTCDATE())`);
+
       sendMail(
         inviteEmail,
-        `OrgaSphere: Du wurdest zum Orbit "${orbitName}" hinzugefügt`,
+        `OrgaSphere: Einladung zum Orbit "${orbitName}"`,
         `<h2>OrgaSphere</h2>
-         <p>Du wurdest als <strong>Co-Pilot</strong> zum Orbit <strong>"${orbitName}"</strong> hinzugefügt.</p>
-         <p>Öffne die OrgaSphere-App und melde dich an, um loszulegen.</p>`
-      ).catch(err => console.error('Benachrichtigungsmail fehlgeschlagen:', err.message));
+         <p>Du wurdest als <strong>Co-Pilot</strong> zum Orbit <strong>"${orbitName}"</strong> eingeladen.</p>
+         <p>Öffne einfach die OrgaSphere-App – die Einladung wartet dort auf dich und lässt sich mit einem Tippen annehmen.</p>
+         <p style="color:#666;font-size:12px;margin-top:16px">Lieber im Browser? Dann hier annehmen:<br>${inviteLink}</p>`
+      ).catch(err => console.error('Einladungsmail fehlgeschlagen:', err.message));
 
-      res.json({ status: 'added', memberId });
+      res.json({ status: 'invited', memberId });
     } else {
       // Nutzer nicht registriert → Einladung per E-Mail
       const inviteToken = uuidv4();
@@ -1115,6 +1488,8 @@ app.get('/tasks/archived', requireAuth, async (req, res) => {
 
 app.post('/tasks', requireAuth, async (req, res) => {
   const { domainId, title, description, startDate, dueDate, recurrenceFrequency, recurrenceInterval } = req.body;
+  if (rejectIfTooLong(res, 'Der Titel', title, FIELD_LIMITS.sphereTitle)) return;
+  if (rejectIfTooLong(res, 'Die Beschreibung', description, FIELD_LIMITS.sphereDescription)) return;
   const id = uuidv4();
   try {
     const p = await getPool();
@@ -1249,6 +1624,7 @@ app.patch('/tasks/:id/title', requireAuth, async (req, res) => {
   const { id } = req.params;
   const { title } = req.body;
   if (!title || !title.trim()) return res.status(400).json({ error: 'Titel darf nicht leer sein' });
+  if (rejectIfTooLong(res, 'Der Titel', title, FIELD_LIMITS.sphereTitle)) return;
   try {
     const p = await getPool();
     const taskResult = await p.request().input('id', sql.NVarChar, id).query('SELECT domainId FROM Task WHERE id = @id');
@@ -1273,6 +1649,7 @@ app.patch('/tasks/:id/title', requireAuth, async (req, res) => {
 app.patch('/tasks/:id/description', requireAuth, async (req, res) => {
   const { id } = req.params;
   const { description } = req.body;
+  if (rejectIfTooLong(res, 'Die Beschreibung', description, FIELD_LIMITS.sphereDescription)) return;
   try {
     const p = await getPool();
     const taskResult = await p.request().input('id', sql.NVarChar, id).query('SELECT domainId FROM Task WHERE id = @id');
@@ -1516,6 +1893,7 @@ app.get('/logs/:taskId', requireAuth, async (req, res) => {
 
 app.post('/logs', requireAuth, async (req, res) => {
   const { taskId, text } = req.body;
+  if (rejectIfTooLong(res, 'Der Eintrag', text, FIELD_LIMITS.logText)) return;
   const id  = uuidv4();
   const now = new Date();
   try {

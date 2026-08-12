@@ -116,7 +116,37 @@ class ApiService {
     );
     _checkStatus(response);
     final body = jsonDecode(response.body) as Map<String, dynamic>;
-    return body['status'] as String; // 'added' or 'invited'
+    return body['status'] as String; // 'invited'
+  }
+
+  // -----------------------------------------------------------------------
+  // Einladungen (offene Mitgliedschaften des angemeldeten Nutzers)
+  // -----------------------------------------------------------------------
+
+  static Future<List<OrbitInvitation>> getInvitations() async {
+    final response =
+        await http.get(Uri.parse('$_baseUrl/invitations'), headers: _headers);
+    _checkStatus(response);
+    final List<dynamic> data = jsonDecode(response.body);
+    return data
+        .map((j) => OrbitInvitation.fromJson(j as Map<String, dynamic>))
+        .toList();
+  }
+
+  static Future<void> acceptInvitation(String invitationId) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/invitations/$invitationId/accept'),
+      headers: _headers,
+    );
+    _checkStatus(response);
+  }
+
+  static Future<void> declineInvitation(String invitationId) async {
+    final response = await http.post(
+      Uri.parse('$_baseUrl/invitations/$invitationId/decline'),
+      headers: _headers,
+    );
+    _checkStatus(response);
   }
 
   static Future<void> suspendCoPilot(String orbitId, String memberId) async {

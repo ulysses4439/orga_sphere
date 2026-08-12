@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/task_service.dart';
+import '../utils/field_limits.dart';
 
 const _kPaletteColors = [
   // Pastelltöne
@@ -77,6 +78,7 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
                     ),
                     textCapitalization: TextCapitalization.sentences,
                     autofocus: true,
+                    maxLength: kOrbitNameMaxLength,
                     validator: (v) =>
                         (v == null || v.trim().isEmpty) ? 'Name ist erforderlich' : null,
                   ),
@@ -89,6 +91,8 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
                     ),
                     textCapitalization: TextCapitalization.sentences,
                     maxLines: 3,
+                    maxLength: kOrbitDescriptionMaxLength,
+                    buildCounter: nearLimitCounter,
                   ),
                   const SizedBox(height: 16),
                   InputDecorator(

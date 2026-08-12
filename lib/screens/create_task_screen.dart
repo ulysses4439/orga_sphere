@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/task_service.dart';
 import '../utils/date_format.dart';
+import '../utils/field_limits.dart';
 import '../widgets/reminder_picker_dialog.dart';
 
 class CreateTaskScreen extends StatefulWidget {
@@ -121,6 +122,7 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                     ),
                     textCapitalization: TextCapitalization.sentences,
                     autofocus: true,
+                    maxLength: kSphereTitleMaxLength,
                     validator: (v) =>
                         (v == null || v.trim().isEmpty) ? 'Titel ist erforderlich' : null,
                   ),
@@ -133,6 +135,8 @@ class _CreateTaskScreenState extends State<CreateTaskScreen> {
                     ),
                     textCapitalization: TextCapitalization.sentences,
                     maxLines: 3,
+                    maxLength: kSphereDescriptionMaxLength,
+                    buildCounter: nearLimitCounter,
                   ),
                   const SizedBox(height: 16),
                   _DateTile(

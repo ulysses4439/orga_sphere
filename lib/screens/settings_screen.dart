@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../services/auth_service.dart';
+import '../utils/field_limits.dart';
 
 class SettingsScreen extends StatefulWidget {
   final VoidCallback onLogout;
@@ -70,6 +71,8 @@ class _SettingsScreenState extends State<SettingsScreen> {
                   ),
                   textCapitalization: TextCapitalization.words,
                   autofocus: true,
+                  maxLength: kDisplayNameMaxLength,
+                  buildCounter: nearLimitCounter,
                   validator: (v) =>
                       v == null || v.trim().isEmpty ? 'Name erforderlich' : null,
                 ),

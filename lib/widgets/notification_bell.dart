@@ -170,6 +170,8 @@ class _NotificationListState extends State<_NotificationList> {
         return Icons.edit_note;
       case 'reminder':
         return Icons.alarm;
+      case 'member_joined':
+        return Icons.group_add_outlined;
       default:
         return Icons.notifications_none;
     }

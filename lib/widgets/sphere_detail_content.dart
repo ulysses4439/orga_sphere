@@ -6,6 +6,7 @@ import '../services/notification_center.dart';
 import '../services/task_service.dart';
 import '../theme/app_colors.dart';
 import '../utils/date_format.dart';
+import '../utils/field_limits.dart';
 import 'reminder_picker_dialog.dart';
 
 /// Reusable sphere detail body – used as embedded panel (desktop) and
@@ -591,6 +592,8 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                               focusNode: _titleFocusNode,
                               style: Theme.of(context).textTheme.headlineSmall,
                               maxLines: null,
+                              maxLength: kSphereTitleMaxLength,
+                              buildCounter: nearLimitCounter,
                               decoration: const InputDecoration(
                                 border: InputBorder.none,
                                 isDense: true,
@@ -940,6 +943,8 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
           maxLines: null,
           minLines: 3,
           textCapitalization: TextCapitalization.sentences,
+          maxLength: kSphereDescriptionMaxLength,
+          buildCounter: nearLimitCounter,
           decoration: InputDecoration(
             hintText: 'Beschreibung hinzufügen…',
             contentPadding: const EdgeInsets.all(12),
@@ -1238,6 +1243,8 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                   controller: _logTextController,
                   expands: true,
                   maxLines: null,
+                  maxLength: kLogEntryMaxLength,
+                  buildCounter: nearLimitCounter,
                   textAlignVertical: TextAlignVertical.top,
                   decoration: InputDecoration(
                     hintText: 'Beschreiben Sie den Fortschritt...',
