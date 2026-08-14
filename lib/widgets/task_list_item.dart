@@ -192,9 +192,12 @@ class TaskListItem extends StatelessWidget {
                     visualDensity: VisualDensity.compact,
                   ),
                   const SizedBox(width: 8),
-                  if (task.logEntries.isNotEmpty)
+                  // Anzahl statt geladener Eintraege: Die Liste kennt die
+                  // Eintraege selbst nicht mehr – sie kommen erst beim Oeffnen
+                  // der Sphere. Der Server liefert die Zahl beim Abgleich mit.
+                  if (task.logCount > 0)
                     Text(
-                      '${task.logEntries.length} Einträge',
+                      '${task.logCount} Einträge',
                       style: Theme.of(context)
                           .textTheme
                           .bodySmall

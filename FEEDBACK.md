@@ -354,6 +354,74 @@ und ließ dabei `isShoppingList` und `myRole` fallen. Beim Umbenennen eines Eink
 verlor dieser bis zum nächsten Abgleich (bis zu 30 Sekunden) seinen Listen-Modus und verhielt
 sich wie ein normaler Orbit. `TaskDomain` hat jetzt ein `copyWith`, das alle Felder mitnimmt.
 
+### 20. Eingeladene können nicht absagen — der Pilot wartet ewig
+**Gemeldet:** 13.08.2026 · **Erledigt in:** v1.0.18 · **Plattformen:** Desktop + App (Backend)
+
+**Problem:** Die Einladungsmail kannte nur einen Ausgang: annehmen. Wer nicht mitmachen wollte,
+konnte die Mail bloß ignorieren. Der Pilot erfuhr davon nichts und hatte auf Dauer einen grauen
+Ring in der Teilnehmerleiste stehen — ohne zu wissen, ob die Person noch überlegt oder längst
+abgewinkt hat.
+
+**Lösung:** Jede Einladungsmail enthält jetzt zusätzlich einen Ablehnen-Link; die
+Annehmen-Seiten im Browser haben denselben Ausgang bekommen. Eine Absage löscht die
+Mitgliedschaft, womit der graue Ring von selbst verschwindet — es gibt nichts nachzuziehen.
+Der Pilot bekommt eine Meldung in der Glocke **und** eine Mail. Beides zusammen, weil er in
+genau dieser Lage gerade nicht in die App schaut: Täte er es, wäre ihm der offene Platz längst
+aufgefallen.
+
+**Nur der Pilot wird benachrichtigt.** Für die übrigen Co-Piloten ist jemand, der nie dabei war,
+keine Nachricht wert. Bisher galt jede Meldung dem ganzen Orbit, deshalb hat `OrbitEvent` eine
+Spalte `targetUserId` bekommen. `NULL` heißt weiterhin „an alle" — alle bestehenden Meldungen
+verhalten sich unverändert.
+
+**Der Ablehnen-Link löscht bewusst nicht sofort,** sondern führt auf eine Seite mit einem Knopf.
+Outlook und Gmail rufen Links aus Mails automatisch ab (Safe Links, Link-Vorschau), lange bevor
+ein Mensch geklickt hat. Ein löschendes GET hätte Einladungen stillschweigend zurückgenommen,
+und niemand hätte gewusst warum.
+
+**Kein Passwort beim Ablehnen** — anders als beim Annehmen. Absagen verschafft keinerlei
+Zugriff, im schlimmsten Missbrauchsfall lädt der Pilot erneut ein. Eine Passworthürde träfe vor
+allem die, die noch gar kein Konto haben — also genau die Gruppe, die am ehesten absagt.
+
+**Nebenbefund, mitbehoben:** Orbit-Namen und Adressen landen auf den Einladungsseiten mitten im
+HTML. Ein Orbit mit spitzen Klammern im Namen hätte dort Markup einschleusen können; die neuen
+Seiten maskieren solche Zeichen (`escapeHtml`).
+
+**Einkaufslisten-Orbits sind ausgenommen** von der sonst geltenden Stummschaltung: Gezielte
+Meldungen entstehen einmalig zu einer Person, nicht beim Abhaken von 20 Positionen. Wer eine
+Einkaufsliste teilt, soll trotzdem erfahren, dass abgesagt wurde.
+
+### 21. Detailansicht lässt sich in der Breite verstellen (Wunsch)
+**Gemeldet:** 13.08.2026 · **Umgesetzt in:** v1.0.18 · **Plattformen:** nur Desktop
+
+**Wunsch:** Die Detailansicht rechts hatte eine feste Breite von 420 Pixeln. Gerade die
+Textfelder des Aktivitätsverlaufs waren damit schmaler als nötig — mit Blick auf Screenshots im
+Verlauf (siehe Vorhaben „Bilder in Einträgen") wird das noch wichtiger.
+
+**Lösung:** Der Trenner zwischen Sphere-Liste und Detailansicht ist jetzt ein Ziehgriff. Der
+Mauszeiger wechselt beim Darüberfahren, die Linie hebt sich hervor. Die eingestellte Breite
+wird gemerkt und überlebt den Neustart.
+
+**Grenzen bewusst gesetzt:** unten 320 px (darunter bricht der Inhalt der Detailansicht um —
+die Zeilen „Zugewiesen an", „Wiederholung" usw. haben Beschriftung und Wert nebeneinander),
+oben 1000 px. Zusätzlich bleiben in der Mitte immer mindestens 360 px für die Sphere-Liste
+stehen. Ohne diese Schranke ließe sich auf einem schmalen Fenster eine Breite einstellen, bei
+der die Liste unbrauchbar wird — und der Trenner läge genau dort, wo man ihn nicht mehr greifen
+kann. Begrenzt wird nur die *Anzeige*: Wer später an einem breiteren Monitor sitzt, bekommt
+seine gemerkte Breite unverändert zurück.
+
+**Die Trefferfläche ist breiter als die Linie** (9 px statt 1 px). Einen ein Pixel breiten
+Trenner trifft mit der Maus niemand zuverlässig; gezeichnet wird trotzdem weiter nur die dünne
+Linie, damit die Ansicht aussieht wie vorher.
+
+**Kein Gegenstück auf dem Handy** — und das ist hier richtig so. Die Detailansicht ist dort eine
+eigene, bildschirmfüllende Seite; es gibt keine zwei Bereiche, zwischen denen sich etwas
+verschieben ließe. Damit ist dies die eine Änderung, bei der die Desktop-Handy-Parität aus der
+Grundregel nichts zu tun hat.
+
+**Ohne neues Paket gebaut:** Die Breite liegt im selben lokalen Speicher wie Anmeldetoken und
+Glocken-Zustand (`UiPrefs`, nach dem Vorbild von `NotificationCenter`).
+
 ---
 
 ## Erledigt

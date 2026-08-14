@@ -71,8 +71,8 @@ const FIELD_LIMITS = {
   displayName:       200,   // AppUser.displayName
 };
 
-/// Antwortet mit 400 und gibt true zurueck, wenn `value` zu lang ist.
-/// Aufrufer beenden dann mit `return`.
+// Antwortet mit 400 und gibt true zurueck, wenn `value` zu lang ist.
+// Aufrufer beenden dann mit `return`.
 function rejectIfTooLong(res, label, value, max) {
   if (typeof value !== 'string') return false;
   const length = value.trim().length;
@@ -190,37 +190,51 @@ async function sendPushToTokens(p, tokens, body, data) {
 
 // Schreibt ein Team-Ereignis in OrbitEvent und pusht es an alle aktiven Mitglieder
 // des Orbits AUSSER dem Auslöser. Darf die auslösende Aktion niemals scheitern lassen.
-async function emitOrbitEvent(p, { orbitId, actorUserId, actorName, type, sphereId, sphereTitle, orbitName, body }) {
+// targetUserId begrenzt eine Meldung auf EINE Person. Ohne den Wert (der
+// Normalfall) geht sie wie bisher an alle aktiven Mitglieder des Orbits.
+// Gedacht fuer Vorgaenge, die nur einen einzelnen etwas angehen - etwa eine
+// abgelehnte Einladung, die ausschliesslich Sache des Piloten ist.
+async function emitOrbitEvent(p, { orbitId, actorUserId, actorName, type, sphereId, sphereTitle, orbitName, body, targetUserId }) {
   try {
     // Einfache Listen ("Einkaufslisten-Modus") bleiben stumm. Sonst wuerde das
     // Erfassen von 20 Positionen und das spaetere Abhaken im Laden 40 Meldungen
     // beim Co-Piloten ausloesen und die Glocke unbrauchbar machen.
-    const listCheck = await p.request()
-      .input('orbitId', sql.NVarChar, orbitId)
-      .query('SELECT isShoppingList FROM TaskDomain WHERE id = @orbitId');
-    if (listCheck.recordset[0]?.isShoppingList) return;
+    //
+    // Gezielte Meldungen sind davon ausgenommen: Sie entstehen nicht beim
+    // Abarbeiten einer Liste, sondern einmalig zu einer Person. Wer eine
+    // Einkaufsliste teilt, soll trotzdem erfahren, dass die Einladung abgelehnt
+    // wurde - sonst wartet er ewig auf jemanden, der nie kommt.
+    if (!targetUserId) {
+      const listCheck = await p.request()
+        .input('orbitId', sql.NVarChar, orbitId)
+        .query('SELECT isShoppingList FROM TaskDomain WHERE id = @orbitId');
+      if (listCheck.recordset[0]?.isShoppingList) return;
+    }
 
     await p.request()
-      .input('id',          sql.NVarChar,  uuidv4())
-      .input('orbitId',     sql.NVarChar,  orbitId)
-      .input('actorUserId', sql.NVarChar,  actorUserId || null)
-      .input('actorName',   sql.NVarChar,  actorName || null)
-      .input('type',        sql.NVarChar,  type)
-      .input('sphereId',    sql.NVarChar,  sphereId || null)
-      .input('sphereTitle', sql.NVarChar,  sphereTitle || null)
-      .input('orbitName',   sql.NVarChar,  orbitName || null)
-      .input('body',        sql.NVarChar,  body)
+      .input('id',           sql.NVarChar,  uuidv4())
+      .input('orbitId',      sql.NVarChar,  orbitId)
+      .input('actorUserId',  sql.NVarChar,  actorUserId || null)
+      .input('actorName',    sql.NVarChar,  actorName || null)
+      .input('type',         sql.NVarChar,  type)
+      .input('sphereId',     sql.NVarChar,  sphereId || null)
+      .input('sphereTitle',  sql.NVarChar,  sphereTitle || null)
+      .input('orbitName',    sql.NVarChar,  orbitName || null)
+      .input('body',         sql.NVarChar,  body)
+      .input('targetUserId', sql.NVarChar,  targetUserId || null)
       .query(`INSERT INTO OrbitEvent
-                (id, orbitId, actorUserId, actorName, type, sphereId, sphereTitle, orbitName, body)
-              VALUES (@id, @orbitId, @actorUserId, @actorName, @type, @sphereId, @sphereTitle, @orbitName, @body)`);
+                (id, orbitId, actorUserId, actorName, type, sphereId, sphereTitle, orbitName, body, targetUserId)
+              VALUES (@id, @orbitId, @actorUserId, @actorName, @type, @sphereId, @sphereTitle, @orbitName, @body, @targetUserId)`);
 
     const recipients = await p.request()
       .input('orbitId', sql.NVarChar, orbitId)
       .input('actor',   sql.NVarChar, actorUserId || '')
+      .input('target',  sql.NVarChar, targetUserId || null)
       .query(`SELECT dt.token
               FROM OrbitMember om
               JOIN DeviceToken dt ON dt.userId = om.userId
-              WHERE om.orbitId = @orbitId AND om.status = 'active' AND om.userId <> @actor`);
+              WHERE om.orbitId = @orbitId AND om.status = 'active' AND om.userId <> @actor
+                AND (@target IS NULL OR om.userId = @target)`);
     const tokens = recipients.recordset.map(r => r.token).filter(Boolean);
 
     await sendPushToTokens(p, tokens, body, {
@@ -810,6 +824,90 @@ app.post('/reset-password', async (req, res) => {
 // Einladung (HTML-Seite + Annahme)
 // -----------------------------------------------------------------------
 
+// Wandelt Text so um, dass er in HTML nichts ausloesen kann. Orbit-Namen und
+// E-Mail-Adressen landen auf den Einladungsseiten mitten im Markup - ohne das
+// hier koennte ein Orbit namens "<script>..." beim Eingeladenen Code ausfuehren.
+function escapeHtml(value) {
+  return String(value ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+// Anzeigename zu einer Adresse - sonst die Adresse selbst. Wer noch kein Konto
+// hat, hat auch keinen Namen, den man nennen koennte.
+async function displayNameForEmail(p, email) {
+  try {
+    const row = await p.request()
+      .input('email', sql.NVarChar, email)
+      .query('SELECT displayName FROM AppUser WHERE email = @email');
+    const name = row.recordset[0]?.displayName;
+    return (name && name.trim()) || email;
+  } catch {
+    return email;
+  }
+}
+
+// Eine Absage vollziehen. Die Mitgliedschaft wird GELOESCHT statt auf
+// 'declined' gesetzt, damit der Pilot dieselbe Person spaeter erneut einladen
+// kann, ohne an der Doppelpruefung beim Einladen zu scheitern. Nebeneffekt:
+// Der graue Ring verschwindet von selbst aus der Teilnehmerleiste, sobald sie
+// das naechste Mal laedt - es gibt nichts nachzuziehen.
+//
+// Die Rueckmeldung geht ausschliesslich an den Piloten: Fuer die uebrigen
+// Co-Piloten ist jemand, der nie dabei war, keine Nachricht wert. Zusaetzlich
+// zur Glocke eine Mail, denn genau in dieser Lage schaut der Pilot gerade
+// nicht in die App - sonst waere ihm der offene Platz laengst aufgefallen.
+async function declineInvitation(p, invite, declinedByLabel) {
+  await p.request()
+    .input('id', sql.NVarChar, invite.id)
+    .query('DELETE FROM OrbitMember WHERE id = @id');
+
+  try {
+    const pilotResult = await p.request()
+      .input('orbitId', sql.NVarChar, invite.orbitId)
+      .query(`SELECT TOP 1 om.userId, om.email
+              FROM OrbitMember om
+              WHERE om.orbitId = @orbitId AND om.role = 'pilot' AND om.status = 'active'`);
+    const pilot = pilotResult.recordset[0];
+    if (!pilot) return;
+
+    const orbitName = invite.orbitName || '';
+
+    if (pilot.userId) {
+      // actorUserId bleibt bewusst leer: Der Ablehnende ist nicht der
+      // Empfaenger, und ohne Konto hat er ohnehin keine ID. Waere sie gesetzt,
+      // koennte die Meldung am Eigenfilter in GET /events haengen bleiben.
+      await emitOrbitEvent(p, {
+        orbitId: invite.orbitId,
+        type: 'member_declined',
+        actorName: declinedByLabel,
+        orbitName,
+        body: `${declinedByLabel} hat die Einladung zu „${orbitName}" abgelehnt.`,
+        targetUserId: pilot.userId,
+      });
+    }
+
+    if (pilot.email) {
+      sendMail(
+        pilot.email,
+        `OrgaSphere: Einladung zu "${orbitName}" abgelehnt`,
+        `<h2>OrgaSphere</h2>
+         <p><strong>${escapeHtml(declinedByLabel)}</strong> hat deine Einladung zum Orbit
+            <strong>"${escapeHtml(orbitName)}"</strong> abgelehnt.</p>
+         <p>Der Platz in der Teilnehmerleiste ist wieder frei - du kannst die Person
+            jederzeit erneut einladen.</p>`
+      ).catch(err => console.error('Absage-Mail fehlgeschlagen:', err.message));
+    }
+  } catch (err) {
+    // Die Absage selbst ist vollzogen. Eine fehlgeschlagene Benachrichtigung
+    // darf sie nicht zurueckdrehen.
+    console.error('Benachrichtigung ueber Absage fehlgeschlagen:', err.message);
+  }
+}
+
 app.get('/invite', async (req, res) => {
   const { token } = req.query;
   if (!token) {
@@ -866,6 +964,8 @@ app.get('/invite', async (req, res) => {
     <button type="submit">Einladung annehmen</button>
   </form>
   <div id="msg"></div>
+  <p class="hint">Du willst nicht mitmachen?
+     <a href="/invite/decline?token=${encodeURIComponent(token)}">Einladung ablehnen</a></p>
   <script>
     document.getElementById('form').addEventListener('submit', async e => {
       e.preventDefault();
@@ -919,6 +1019,8 @@ app.get('/invite', async (req, res) => {
     <button type="submit">Konto erstellen & Einladung annehmen</button>
   </form>
   <div id="msg"></div>
+  <p class="hint">Du willst nicht mitmachen? Dann brauchst du auch kein Konto:
+     <a href="/invite/decline?token=${encodeURIComponent(token)}">Einladung ablehnen</a></p>
   <script>
     document.getElementById('form').addEventListener('submit', async e => {
       e.preventDefault();
@@ -1006,6 +1108,116 @@ app.post('/invite', async (req, res) => {
       .query(`UPDATE OrbitMember SET userId = @userId, status = 'active',
               joinedAt = GETUTCDATE(), inviteToken = NULL
               WHERE inviteToken = @token`);
+
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// -----------------------------------------------------------------------
+// Ablehnen per Mail-Link
+//
+// Bewusst zweistufig: Diese Seite zeigt nur einen Knopf, geloescht wird erst
+// durch das POST dahinter. Ein loeschendes GET waere hier ein Eigentor -
+// Outlook und Gmail rufen Links aus Mails automatisch ab (Safe Links,
+// Link-Vorschau), lange bevor ein Mensch darauf geklickt hat. Einladungen
+// wuerden sich stillschweigend selbst zuruecknehmen, und niemand wuesste warum.
+//
+// Anders als beim Annehmen wird KEIN Passwort verlangt. Ablehnen verschafft
+// keinerlei Zugriff; im schlimmsten Missbrauchsfall laedt der Pilot die Person
+// erneut ein. Eine Passworthuerde wuerde vor allem die treffen, die noch gar
+// kein Konto haben - also genau die Gruppe, die am ehesten absagt.
+// -----------------------------------------------------------------------
+
+app.get('/invite/decline', async (req, res) => {
+  const { token } = req.query;
+  res.setHeader('Content-Type', 'text/html; charset=utf-8');
+  if (!token) {
+    return res.status(400).send('<h2>Ungültiger Einladungslink.</h2>');
+  }
+  try {
+    const p = await getPool();
+    const result = await p.request()
+      .input('token', sql.NVarChar, token)
+      .query(`SELECT om.email, td.name AS orbitName
+              FROM OrbitMember om
+              JOIN TaskDomain td ON om.orbitId = td.id
+              WHERE om.inviteToken = @token AND om.status = 'pending'`);
+    if (result.recordset.length === 0) {
+      return res.status(404).send('<h2>Dieser Einladungslink ist ungültig oder wurde bereits verwendet.</h2>');
+    }
+    const invite = result.recordset[0];
+
+    res.send(`<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>OrgaSphere – Einladung ablehnen</title>
+  <style>
+    body { font-family: sans-serif; max-width: 480px; margin: 60px auto; padding: 0 20px; color: #333; }
+    h1 { color: #512DA8; }
+    button { background: #c62828; color: white; border: none; padding: 12px 24px; border-radius: 6px; font-size: 16px; cursor: pointer; width: 100%; }
+    button:hover { background: #a91d1d; }
+    .hint { color: #666; font-size: 14px; margin-top: 8px; }
+    .error { color: #c62828; margin-top: 12px; }
+    .success { color: #2e7d32; margin-top: 12px; }
+  </style>
+</head>
+<body>
+  <h1>OrgaSphere</h1>
+  <p>Du wurdest als <strong>Co-Pilot</strong> zum Orbit <strong>"${escapeHtml(invite.orbitName)}"</strong> eingeladen.</p>
+  <p>Wenn du absagst, wird die Einladung an <strong>${escapeHtml(invite.email)}</strong> gelöscht und
+     der Pilot darüber benachrichtigt. Du kannst später jederzeit erneut eingeladen werden.</p>
+  <button id="decline">Einladung ablehnen</button>
+  <p class="hint">Versehentlich hier gelandet? Dann schließe diese Seite einfach –
+     es passiert nichts, solange du nicht auf den Knopf drückst.</p>
+  <div id="msg"></div>
+  <script>
+    document.getElementById('decline').addEventListener('click', async () => {
+      const msg = document.getElementById('msg');
+      const res = await fetch('/invite/decline', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ token: ${JSON.stringify(token)} })
+      });
+      const data = await res.json();
+      if (res.ok) {
+        msg.className = 'success';
+        msg.textContent = 'Einladung abgelehnt. Der Pilot wurde benachrichtigt.';
+        document.getElementById('decline').style.display = 'none';
+      } else {
+        msg.className = 'error';
+        msg.textContent = data.error || 'Einladung konnte nicht abgelehnt werden.';
+      }
+    });
+  </script>
+</body>
+</html>`);
+  } catch (err) {
+    res.status(500).send('<h2>Serverfehler. Bitte versuche es später erneut.</h2>');
+  }
+});
+
+app.post('/invite/decline', async (req, res) => {
+  const { token } = req.body;
+  if (!token) return res.status(400).json({ error: 'Token erforderlich' });
+  try {
+    const p = await getPool();
+    const result = await p.request()
+      .input('token', sql.NVarChar, token)
+      .query(`SELECT om.id, om.orbitId, om.email, td.name AS orbitName
+              FROM OrbitMember om
+              JOIN TaskDomain td ON td.id = om.orbitId
+              WHERE om.inviteToken = @token AND om.status = 'pending'`);
+    const invite = result.recordset[0];
+    if (!invite) {
+      return res.status(404).json({ error: 'Einladungslink ungültig oder bereits verwendet' });
+    }
+
+    const label = await displayNameForEmail(p, invite.email);
+    await declineInvitation(p, invite, label);
 
     res.json({ success: true });
   } catch (err) {
@@ -1110,11 +1322,8 @@ app.post('/invitations/:id/decline', requireAuth, async (req, res) => {
     const invite = await loadOwnInvitation(p, req.params.id, req.user.userId, email);
     if (!invite) return res.status(404).json({ error: 'Einladung nicht gefunden' });
 
-    // Zeile loeschen statt auf 'declined' setzen: So kann der Pilot dieselbe
-    // Person spaeter erneut einladen, ohne an der Doppelpruefung zu scheitern.
-    await p.request()
-      .input('id', sql.NVarChar, invite.id)
-      .query('DELETE FROM OrbitMember WHERE id = @id');
+    const actorName = await resolveActorName(p, req.user.userId, email);
+    await declineInvitation(p, invite, actorName);
 
     res.json({ success: true });
   } catch (err) {
@@ -1133,13 +1342,7 @@ app.get('/domains', requireAuth, async (req, res) => {
     // Aktionen aus, die nur dem Piloten zustehen (Umbenennen, Loeschen,
     // Einladen). Die Rechte selbst haengen NICHT daran – die prueft weiterhin
     // requirePilot am jeweiligen Endpunkt.
-    const result = await p.request()
-      .input('userId', sql.NVarChar, req.user.userId)
-      .query(`SELECT d.*, om.role AS myRole
-              FROM TaskDomain d
-              JOIN OrbitMember om ON om.orbitId = d.id
-              WHERE om.userId = @userId AND om.status = 'active'`);
-    res.json(result.recordset);
+    res.json(await queryDomains(p, req.user.userId));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1341,6 +1544,7 @@ app.post('/domains/:id/members', requireAuth, requirePilot, async (req, res) => 
       const inviteToken = uuidv4();
       const baseUrl = process.env.APP_BASE_URL || `https://orga-sphere-api-dev-f5a0dtenanhefwb2.westeurope-01.azurewebsites.net`;
       const inviteLink = `${baseUrl}/invite?token=${inviteToken}`;
+      const declineLink = `${baseUrl}/invite/decline?token=${inviteToken}`;
 
       await p.request()
         .input('id',          sql.NVarChar,  memberId)
@@ -1357,7 +1561,9 @@ app.post('/domains/:id/members', requireAuth, requirePilot, async (req, res) => 
         `<h2>OrgaSphere</h2>
          <p>Du wurdest als <strong>Co-Pilot</strong> zum Orbit <strong>"${orbitName}"</strong> eingeladen.</p>
          <p>Öffne einfach die OrgaSphere-App – die Einladung wartet dort auf dich und lässt sich mit einem Tippen annehmen.</p>
-         <p style="color:#666;font-size:12px;margin-top:16px">Lieber im Browser? Dann hier annehmen:<br>${inviteLink}</p>`
+         <p style="color:#666;font-size:12px;margin-top:16px">Lieber im Browser? Dann hier annehmen:<br>${inviteLink}</p>
+         <p style="color:#666;font-size:12px;margin-top:16px">Kein Interesse? Dann sag bitte kurz ab, damit ${escapeHtml(orbitName)} nicht ewig auf dich wartet:<br>
+            <a href="${declineLink}" style="color:#666">Einladung ablehnen</a></p>`
       ).catch(err => console.error('Einladungsmail fehlgeschlagen:', err.message));
 
       res.json({ status: 'invited', memberId });
@@ -1366,6 +1572,7 @@ app.post('/domains/:id/members', requireAuth, requirePilot, async (req, res) => 
       const inviteToken = uuidv4();
       const baseUrl = process.env.APP_BASE_URL || `https://orga-sphere-api-dev-f5a0dtenanhefwb2.westeurope-01.azurewebsites.net`;
       const inviteLink = `${baseUrl}/invite?token=${inviteToken}`;
+      const declineLink = `${baseUrl}/invite/decline?token=${inviteToken}`;
 
       await p.request()
         .input('id',          sql.NVarChar,  memberId)
@@ -1381,7 +1588,9 @@ app.post('/domains/:id/members', requireAuth, requirePilot, async (req, res) => 
         `<h2>OrgaSphere</h2>
          <p>Du wurdest als <strong>Co-Pilot</strong> zum Orbit <strong>"${orbitName}"</strong> eingeladen.</p>
          <p><a href="${inviteLink}" style="background:#512DA8;color:white;padding:12px 24px;border-radius:6px;text-decoration:none;display:inline-block;margin-top:12px">Einladung annehmen</a></p>
-         <p style="color:#666;font-size:12px;margin-top:16px">Oder kopiere diesen Link in deinen Browser:<br>${inviteLink}</p>`
+         <p style="color:#666;font-size:12px;margin-top:16px">Oder kopiere diesen Link in deinen Browser:<br>${inviteLink}</p>
+         <p style="color:#666;font-size:12px;margin-top:16px">Kein Interesse? Dann sag bitte kurz ab, damit ${escapeHtml(orbitName)} nicht ewig auf dich wartet:<br>
+            <a href="${declineLink}" style="color:#666">Einladung ablehnen</a></p>`
       ).catch(err => console.error('Einladungsmail fehlgeschlagen:', err.message));
 
       res.json({ status: 'invited', memberId });
@@ -1459,24 +1668,73 @@ async function getUserOrbitIds(p, userId) {
   return result.recordset.map(r => r.orbitId);
 }
 
+// Orbits des Nutzers samt eigener Rolle – dieselbe Abfrage wie GET /domains,
+// damit /domains und /sync nicht auseinanderlaufen koennen.
+async function queryDomains(p, userId) {
+  const result = await p.request()
+    .input('userId', sql.NVarChar, userId)
+    .query(`SELECT d.*, om.role AS myRole
+            FROM TaskDomain d
+            JOIN OrbitMember om ON om.orbitId = d.id
+            WHERE om.userId = @userId AND om.status = 'active'`);
+  return result.recordset;
+}
+
+// Spheres der uebergebenen Orbits, wahlweise die offenen oder die erledigten.
+//
+// `logCount` kommt als Unterabfrage mit: Die Liste zeigt pro Sphere die Zahl
+// ihrer Verlaufseintraege an. Frueher hat die App dafuer die Eintraege selbst
+// geladen – einen HTTP-Abruf pro Sphere. Die Eintraege holt jetzt erst die
+// Detailansicht ueber GET /logs/:taskId, die blosse Anzahl liefert der Server
+// hier ohne zusaetzlichen Abruf mit.
+async function queryTasks(p, orbitIds, { done }) {
+  if (orbitIds.length === 0) return [];
+  const placeholders = orbitIds.map((_, i) => `@oid${i}`).join(',');
+  const request = p.request();
+  orbitIds.forEach((id, i) => request.input(`oid${i}`, sql.NVarChar, id));
+  const result = await request.query(
+    `SELECT t.*, om.email AS assignedToEmail, au.displayName AS assignedToName,
+            (SELECT COUNT(*) FROM TaskLogEntry l WHERE l.taskId = t.id) AS logCount
+     FROM Task t
+     LEFT JOIN OrbitMember om ON om.id = t.assignedToMemberId
+     LEFT JOIN AppUser au ON au.id = om.userId
+     WHERE t.status ${done ? '=' : '!='} 'done' AND t.domainId IN (${placeholders})
+     ORDER BY ${done
+       ? 't.completedAt DESC'
+       : 'CASE WHEN t.dueDate IS NULL THEN 1 ELSE 0 END, t.dueDate ASC'}`
+  );
+  return result.recordset;
+}
+
+// Alles, was die App zum Start braucht, in EINER Antwort.
+//
+// Vorher waren das drei nacheinander abgewartete Abrufe (/domains, /tasks,
+// /tasks/archived) plus einer je Sphere fuer den Verlauf. Auf dem Handy kostet
+// jeder Abruf einen eigenen Verbindungsaufbau; bei schwachem Empfang summierte
+// sich das auf viele Sekunden Ladezeit.
+//
+// Die drei Einzelendpunkte bleiben bestehen: Aeltere App-Versionen sind noch
+// im Umlauf und wuerden sonst beim naechsten Start nichts mehr anzeigen.
+app.get('/sync', requireAuth, async (req, res) => {
+  try {
+    const p = await getPool();
+    const domains = await queryDomains(p, req.user.userId);
+    const orbitIds = domains.map(d => d.id);
+    const [tasks, archived] = await Promise.all([
+      queryTasks(p, orbitIds, { done: false }),
+      queryTasks(p, orbitIds, { done: true }),
+    ]);
+    res.json({ domains, tasks, archived, serverTime: new Date().toISOString() });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/tasks', requireAuth, async (req, res) => {
   try {
     const p = await getPool();
     const orbitIds = await getUserOrbitIds(p, req.user.userId);
-    if (orbitIds.length === 0) return res.json([]);
-
-    const placeholders = orbitIds.map((_, i) => `@oid${i}`).join(',');
-    const request = p.request();
-    orbitIds.forEach((id, i) => request.input(`oid${i}`, sql.NVarChar, id));
-    const result = await request.query(
-      `SELECT t.*, om.email AS assignedToEmail, au.displayName AS assignedToName
-       FROM Task t
-       LEFT JOIN OrbitMember om ON om.id = t.assignedToMemberId
-       LEFT JOIN AppUser au ON au.id = om.userId
-       WHERE t.status != 'done' AND t.domainId IN (${placeholders})
-       ORDER BY CASE WHEN t.dueDate IS NULL THEN 1 ELSE 0 END, t.dueDate ASC`
-    );
-    res.json(result.recordset);
+    res.json(await queryTasks(p, orbitIds, { done: false }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1486,20 +1744,7 @@ app.get('/tasks/archived', requireAuth, async (req, res) => {
   try {
     const p = await getPool();
     const orbitIds = await getUserOrbitIds(p, req.user.userId);
-    if (orbitIds.length === 0) return res.json([]);
-
-    const placeholders = orbitIds.map((_, i) => `@oid${i}`).join(',');
-    const request = p.request();
-    orbitIds.forEach((id, i) => request.input(`oid${i}`, sql.NVarChar, id));
-    const result = await request.query(
-      `SELECT t.*, om.email AS assignedToEmail, au.displayName AS assignedToName
-       FROM Task t
-       LEFT JOIN OrbitMember om ON om.id = t.assignedToMemberId
-       LEFT JOIN AppUser au ON au.id = om.userId
-       WHERE t.status = 'done' AND t.domainId IN (${placeholders})
-       ORDER BY t.completedAt DESC`
-    );
-    res.json(result.recordset);
+    res.json(await queryTasks(p, orbitIds, { done: true }));
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -1572,11 +1817,27 @@ app.patch('/tasks/:id/done', requireAuth, async (req, res) => {
       .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
     if (access.recordset.length === 0) return res.status(403).json({ error: 'Kein Zugriff' });
 
+    // `AND status <> 'done'` macht den Aufruf wiederholbar: Wer zweimal tippt,
+    // weil die erste Antwort auf sich warten laesst, erledigt die Sphere nicht
+    // zweimal.
+    //
+    // Das schliesst vor allem ein Wettrennen: Ohne die Bedingung liefen zwei
+    // gleichzeitige Anfragen beide in createNextCapsuleIfNeeded, sahen dort
+    // beide noch keine Folge-Sphere und legten je eine an – aus einem
+    // doppelten Antippen wurden zwei Wiederholungen. Jetzt gewinnt die erste
+    // Anfrage das Rennen, die zweite aendert keine Zeile und steigt hier aus.
     const now = new Date();
-    await p.request()
+    const updated = await p.request()
       .input('id',          sql.NVarChar,  id)
       .input('completedAt', sql.DateTime2, now)
-      .query("UPDATE Task SET status = 'done', completedAt = @completedAt WHERE id = @id");
+      .query("UPDATE Task SET status = 'done', completedAt = @completedAt WHERE id = @id AND status <> 'done'");
+
+    if (updated.rowsAffected[0] === 0) {
+      // War bereits erledigt. Bewusst ein Erfolg und kein Fehler: Fuer die App
+      // ist der gewuenschte Zustand erreicht. Keine Folge-Sphere und keine
+      // zweite Team-Meldung.
+      return res.json({ success: true, nextTask: null });
+    }
 
     const nextTask = await createNextCapsuleIfNeeded(p, task);
     res.json({ success: true, nextTask: nextTask || null });
@@ -2045,6 +2306,7 @@ app.get('/events', requireAuth, async (req, res) => {
        FROM OrbitEvent e
        WHERE e.orbitId IN (${placeholders})
          AND (e.actorUserId IS NULL OR e.actorUserId <> @actor)
+         AND (e.targetUserId IS NULL OR e.targetUserId = @actor)
          AND NOT EXISTS (
            SELECT 1 FROM OrbitEventDismissed d
            WHERE d.eventId = e.id AND d.userId = @actor

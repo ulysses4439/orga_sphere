@@ -172,6 +172,8 @@ class _NotificationListState extends State<_NotificationList> {
         return Icons.alarm;
       case 'member_joined':
         return Icons.group_add_outlined;
+      case 'member_declined':
+        return Icons.person_off_outlined;
       default:
         return Icons.notifications_none;
     }

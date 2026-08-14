@@ -8,6 +8,7 @@ import '../services/task_service.dart';
 import '../services/reminder_service.dart';
 import '../services/event_poll_service.dart';
 import '../services/sound_service.dart';
+import '../services/ui_prefs.dart';
 import '../widgets/notification_bell.dart';
 import '../theme/app_colors.dart';
 import '../utils/date_format.dart';
@@ -46,12 +47,41 @@ class _TaskListScreenState extends State<TaskListScreen>
   static const double _desktopBreakpoint = 800;
   static const Duration _pollInterval = Duration(seconds: 30);
 
+  /// Breite der Detailansicht rechts. Verstellbar über den Trenner zwischen
+  /// Sphere-Liste und Detailansicht; der eingestellte Wert überlebt den
+  /// Neustart ([UiPrefs]).
+  double _detailPaneWidth = _defaultDetailPaneWidth;
+
+  static const double _defaultDetailPaneWidth = 420;
+
+  /// Unter dieser Breite bricht der Inhalt der Detailansicht um – die Zeilen
+  /// „Zugewiesen an", „Wiederholung" usw. haben Beschriftung und Wert
+  /// nebeneinander und brauchen den Platz.
+  static const double _minDetailPaneWidth = 320;
+
+  /// Nach oben offen wäre die Pane auf einem breiten Monitor irgendwann die
+  /// ganze App. Der Deckel liegt bewusst hoch: Bei Screenshots im
+  /// Aktivitätsverlauf will man wirklich viel Platz.
+  static const double _maxDetailPaneWidth = 1000;
+
+  /// Was in der Mitte mindestens stehen bleibt. Ohne diese Untergrenze ließe
+  /// sich auf einem schmalen Fenster eine Breite einstellen, mit der die
+  /// Sphere-Liste unbrauchbar wird – und der Trenner wäre dann genau dort, wo
+  /// man ihn nicht mehr greifen kann.
+  static const double _minSphereListWidth = 360;
+
+  static const double _orbitSidebarWidth = 240;
+
   @override
   void initState() {
     super.initState();
     _tabController = TabController(length: 2, vsync: this);
     WidgetsBinding.instance.addObserver(this);
     _taskService.addListener(_onServiceChanged);
+    UiPrefs.loadDetailPaneWidth().then((width) {
+      if (!mounted || width == null) return;
+      setState(() => _detailPaneWidth = width);
+    });
     _taskService.ready.then((_) {
       if (!mounted) return;
       // Subscribe BEFORE start() so we don't miss the initial check event.
@@ -67,6 +97,11 @@ class _TaskListScreenState extends State<TaskListScreen>
         EventPollService().poll();
         _loadInvitations();
       });
+    }).catchError((_) {
+      // Kein erster Datenstand zu bekommen (kein Zwischenspeicher, kein Netz).
+      // Den Fehler zeigt der FutureBuilder ueber dieselbe `ready`-Future an –
+      // hier faengt ihn nur ab, wer sonst eine unbehandelte Ausnahme im
+      // Hintergrund produzieren wuerde.
     });
   }
 
@@ -233,6 +268,51 @@ class _TaskListScreenState extends State<TaskListScreen>
   /// Offene Einladungen als Banner über der Orbit-Ansicht. Bewusst hier und
   /// nicht in der Glocke: Eine Einladung ist keine Meldung zum Wegklicken,
   /// sondern verlangt eine Entscheidung.
+  /// Hinweis, dass gerade ein aelterer Stand zu sehen ist.
+  ///
+  /// Erscheint beim Start, solange der erste Abgleich laeuft, und danach nur
+  /// noch, wenn dieser scheitert – im Funkloch bleibt er also stehen. Bewusst
+  /// ein schmaler Balken und kein Dialog: Die App ist ja benutzbar, es sind
+  /// eben nicht die allerneuesten Daten.
+  Widget _buildStaleBanner() {
+    final lastSync = _taskService.lastSyncAt;
+    if (!_taskService.isStale || _taskService.isRefreshing || lastSync == null) {
+      return const SizedBox.shrink();
+    }
+    return Container(
+      width: double.infinity,
+      margin: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFF1C1C2E),
+        borderRadius: BorderRadius.circular(8),
+        border: Border.all(color: Colors.white24, width: 1),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.cloud_off, size: 16, color: Colors.white54),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Keine Verbindung – Stand ${formatAge(lastSync)}',
+              style: const TextStyle(color: Colors.white54, fontSize: 12),
+            ),
+          ),
+          TextButton(
+            onPressed: () => _taskService.refresh(),
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.teal,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              minimumSize: const Size(0, 32),
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('Erneut versuchen', style: TextStyle(fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildInvitationBanners() {
     if (_invitations.isEmpty) return const SizedBox.shrink();
     return Column(
@@ -331,8 +411,12 @@ class _TaskListScreenState extends State<TaskListScreen>
             return const Center(child: CircularProgressIndicator());
           }
           if (snapshot.hasError) return _buildErrorView(snapshot.error);
+          if (_taskService.hasAuthError) {
+            return _buildErrorView(const UnauthorizedException());
+          }
           return Column(
             children: [
+              _buildStaleBanner(),
               _buildInvitationBanners(),
               Expanded(child: _buildDesktopWorkspace()),
             ],
@@ -343,33 +427,57 @@ class _TaskListScreenState extends State<TaskListScreen>
   }
 
   Widget _buildDesktopWorkspace() {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        _buildOrbitSidebar(),
-        const VerticalDivider(width: 1, thickness: 1),
-        Expanded(child: _buildDesktopSpherePanel()),
-        if (_selectedSphereId != null) ...[
-          const VerticalDivider(width: 1, thickness: 1),
-          SizedBox(
-            width: 420,
-            child: SphereDetailContent(
-              key: ValueKey(_selectedSphereId),
-              taskId: _selectedSphereId!,
-              onDeleted: () => setState(() => _selectedSphereId = null),
-              onClose: () => setState(() => _selectedSphereId = null),
-              onChanged: () => setState(() {}),
-              onMarkedDone: () => setState(() {
-                _tabController.animateTo(0);
-                _selectedSphereId = null;
-              }),
-              onReopened: () => setState(() {
-                _tabController.animateTo(0);
-              }),
-            ),
-          ),
-        ],
-      ],
+    return LayoutBuilder(
+      builder: (context, constraints) {
+        // Die Obergrenze haengt am Fenster, nicht nur an der Konstante: Auf
+        // einem schmalen Fenster muss die Sphere-Liste in der Mitte bestehen
+        // bleiben. Wer spaeter auf einem breiteren Monitor arbeitet, bekommt
+        // seine gemerkte Breite wieder – begrenzt wird nur die Anzeige, nicht
+        // der gespeicherte Wert.
+        final maxWidth =
+            (constraints.maxWidth - _orbitSidebarWidth - _minSphereListWidth)
+                .clamp(_minDetailPaneWidth, _maxDetailPaneWidth);
+        final paneWidth = _detailPaneWidth.clamp(_minDetailPaneWidth, maxWidth);
+
+        return Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            _buildOrbitSidebar(),
+            const VerticalDivider(width: 1, thickness: 1),
+            Expanded(child: _buildDesktopSpherePanel()),
+            if (_selectedSphereId != null) ...[
+              _DetailPaneResizer(
+                // Nach links ziehen macht die Pane breiter – daher das Minus.
+                // Gerechnet wird ab der tatsaechlich angezeigten Breite, sonst
+                // laeuft der gespeicherte Wert am Anschlag weiter und der
+                // Trenner reagiert beim Zurueckziehen erst verzoegert.
+                onDrag: (dx) => setState(() {
+                  _detailPaneWidth =
+                      (paneWidth - dx).clamp(_minDetailPaneWidth, maxWidth);
+                }),
+                onDragEnd: () => UiPrefs.saveDetailPaneWidth(_detailPaneWidth),
+              ),
+              SizedBox(
+                width: paneWidth,
+                child: SphereDetailContent(
+                  key: ValueKey(_selectedSphereId),
+                  taskId: _selectedSphereId!,
+                  onDeleted: () => setState(() => _selectedSphereId = null),
+                  onClose: () => setState(() => _selectedSphereId = null),
+                  onChanged: () => setState(() {}),
+                  onMarkedDone: () => setState(() {
+                    _tabController.animateTo(0);
+                    _selectedSphereId = null;
+                  }),
+                  onReopened: () => setState(() {
+                    _tabController.animateTo(0);
+                  }),
+                ),
+              ),
+            ],
+          ],
+        );
+      },
     );
   }
 
@@ -378,7 +486,10 @@ class _TaskListScreenState extends State<TaskListScreen>
     final missed = _reminderService.getMissedReminders();
 
     return Container(
-      width: 240,
+      // Dieselbe Konstante, die _buildDesktopWorkspace zum Begrenzen nutzt –
+      // sonst laeuft die Rechnung fuer die maximale Pane-Breite still daneben,
+      // sobald hier jemand einen anderen Wert einsetzt.
+      width: _orbitSidebarWidth,
       color: Colors.black,
       child: Theme(
         data: Theme.of(context).copyWith(
@@ -868,6 +979,9 @@ class _TaskListScreenState extends State<TaskListScreen>
             return const Center(child: CircularProgressIndicator());
           }
           if (snapshot.hasError) return _buildErrorView(snapshot.error);
+          if (_taskService.hasAuthError) {
+            return _buildErrorView(const UnauthorizedException());
+          }
           return _buildMobileOrbitList();
         },
       ),
@@ -902,6 +1016,7 @@ class _TaskListScreenState extends State<TaskListScreen>
             style: const TextStyle(color: Colors.white38, fontSize: 11),
           ),
         ),
+        _buildStaleBanner(),
         _buildInvitationBanners(),
         if (missed.isNotEmpty) _buildMobileMissedBanner(missed),
         Padding(
@@ -1676,6 +1791,68 @@ class _UserHeader extends StatelessWidget {
             ),
             const Icon(Icons.expand_more, color: Colors.white38, size: 18),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+/// Ziehgriff zwischen Sphere-Liste und Detailansicht.
+///
+/// Sitzt anstelle des festen Trenners und ist absichtlich breiter als die
+/// Linie, die er zeichnet: Eine 1 Pixel breite Trefferflaeche findet mit der
+/// Maus niemand zuverlaessig. Gezeichnet wird trotzdem nur die duenne Linie,
+/// damit die Ansicht aussieht wie vorher – erst unter dem Mauszeiger wird der
+/// Trenner sichtbar staerker und verraet so, dass man ihn anfassen kann.
+class _DetailPaneResizer extends StatefulWidget {
+  /// Horizontale Mausbewegung seit dem letzten Aufruf. Positiv = nach rechts.
+  final ValueChanged<double> onDrag;
+
+  /// Erst am Ende der Bewegung wird die Breite gespeichert – waehrend des
+  /// Ziehens waere das ein Schreibvorgang pro Mausbewegung.
+  final VoidCallback onDragEnd;
+
+  const _DetailPaneResizer({required this.onDrag, required this.onDragEnd});
+
+  /// Breite der Trefferflaeche.
+  static const double _hitWidth = 9;
+
+  @override
+  State<_DetailPaneResizer> createState() => _DetailPaneResizerState();
+}
+
+class _DetailPaneResizerState extends State<_DetailPaneResizer> {
+  bool _hovered = false;
+  bool _dragging = false;
+
+  @override
+  Widget build(BuildContext context) {
+    // Waehrend des Ziehens hervorgehoben lassen, auch wenn der Mauszeiger die
+    // schmale Flaeche verlaesst: Beim schnellen Ziehen ist er der Linie immer
+    // ein Stueck voraus.
+    final active = _hovered || _dragging;
+    return MouseRegion(
+      cursor: SystemMouseCursors.resizeLeftRight,
+      onEnter: (_) => setState(() => _hovered = true),
+      onExit: (_) => setState(() => _hovered = false),
+      child: GestureDetector(
+        // Ohne opaque bekaeme nur die gezeichnete Linie die Zieh-Geste ab,
+        // nicht die breitere Flaeche darum.
+        behavior: HitTestBehavior.opaque,
+        onHorizontalDragStart: (_) => setState(() => _dragging = true),
+        onHorizontalDragUpdate: (details) => widget.onDrag(details.delta.dx),
+        onHorizontalDragEnd: (_) {
+          setState(() => _dragging = false);
+          widget.onDragEnd();
+        },
+        child: SizedBox(
+          width: _DetailPaneResizer._hitWidth,
+          child: Center(
+            child: Container(
+              width: active ? 3 : 1,
+              color: active ? AppColors.teal : Colors.white24,
+            ),
+          ),
         ),
       ),
     );

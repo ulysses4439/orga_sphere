@@ -22,6 +22,20 @@ class Task {
   String? assignedToEmail;
   final List<TaskLogEntry> logEntries;
 
+  /// Anzahl der Verlaufseintraege laut Server.
+  ///
+  /// Die Liste zeigt „N Eintraege" an, ohne die Eintraege selbst zu kennen –
+  /// die holt erst die Detailansicht. Frueher lud die App beim Start fuer jede
+  /// Sphere den kompletten Verlauf, nur um diese Zahl anzeigen zu koennen.
+  int logCount;
+
+  /// Wurde der Verlauf fuer diese Sphere schon vom Server geholt?
+  ///
+  /// Unterscheidet „noch nicht geladen" von „geladen und tatsaechlich leer" –
+  /// sonst zeigt die Detailansicht beim Oeffnen faelschlich „Noch keine
+  /// Eintraege", bevor die Antwort da ist.
+  bool logsLoaded = false;
+
   String? get assignedToLabel {
     final name = assignedToName;
     if (name != null && name.isNotEmpty) return name;
@@ -46,6 +60,7 @@ class Task {
     this.assignedToMemberId,
     this.assignedToName,
     this.assignedToEmail,
+    this.logCount = 0,
     List<TaskLogEntry>? logEntries,
   }) : logEntries = logEntries ?? [];
 
@@ -79,8 +94,36 @@ class Task {
       assignedToMemberId: json['assignedToMemberId'] as String?,
       assignedToName: json['assignedToName'] as String?,
       assignedToEmail: json['assignedToEmail'] as String?,
+      logCount: (json['logCount'] as int?) ?? 0,
     );
   }
+
+  /// Fuer den lokalen Zwischenspeicher. Die Feldnamen entsprechen genau denen
+  /// der Server-Antwort, damit [Task.fromJson] beide Quellen lesen kann und es
+  /// keine zweite, leicht abweichende Leseroutine gibt.
+  ///
+  /// Der Verlauf bleibt aussen vor: Er wird ohnehin beim Oeffnen der Sphere
+  /// frisch geholt, und im Zwischenspeicher wuerde er die Datei unnoetig
+  /// aufblaehen. Die Anzahl [logCount] reicht fuer die Listenanzeige.
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'domainId': domainId,
+        'title': title,
+        'description': description,
+        'startDate': startDate.toIso8601String(),
+        'dueDate': dueDate?.toIso8601String(),
+        'recurrenceFrequency': recurrence.frequency.name,
+        'recurrenceInterval': recurrence.interval,
+        'status': status.name,
+        'createdAt': createdAt.toIso8601String(),
+        'completedAt': completedAt?.toIso8601String(),
+        'reminderAt': reminderAt?.toIso8601String(),
+        'previousTaskId': previousTaskId,
+        'assignedToMemberId': assignedToMemberId,
+        'assignedToName': assignedToName,
+        'assignedToEmail': assignedToEmail,
+        'logCount': logCount,
+      };
 
   bool get isRecurring => recurrence.isRecurring;
 
@@ -102,6 +145,21 @@ class Task {
   void addLogEntry(TaskLogEntry entry) {
     logEntries.add(entry);
     logEntries.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    logCount = logEntries.length;
+  }
+
+  /// Uebernimmt den vom Server geholten Verlauf.
+  ///
+  /// Setzt [logCount] gleich mit: Solange der Verlauf nicht geladen war, kam
+  /// die Zahl aus dem Abgleich; ab jetzt ist die geladene Liste die genauere
+  /// Quelle (jemand anderes kann in der Zwischenzeit etwas ergaenzt haben).
+  void setLogEntries(List<TaskLogEntry> entries) {
+    logEntries
+      ..clear()
+      ..addAll(entries)
+      ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    logCount = logEntries.length;
+    logsLoaded = true;
   }
 
   void markAsDone() {

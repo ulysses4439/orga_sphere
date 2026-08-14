@@ -4,7 +4,9 @@ class OrbitEvent {
   final String id;
   final String orbitId;
   final String? actorName;
-  final String type; // sphere_created | sphere_landed | sphere_assigned | log_added
+  // sphere_created | sphere_landed | sphere_assigned | log_added | reminder
+  // | member_joined | member_declined
+  final String type;
   final String? sphereId;
   final String? sphereTitle;
   final String? orbitName;

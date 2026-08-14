@@ -142,21 +142,29 @@ CREATE TABLE DeviceToken (
 -- OrbitEvent - Feed der Team-Ereignisse je Orbit
 --   (In-App-Glocke + Windows-Toast-Polling)
 -- type: 'sphere_created' | 'sphere_landed' | 'sphere_assigned' | 'log_added'
+--       | 'reminder' | 'member_joined' | 'member_declined'
 -- body: fertiger Anzeigetext
 -- actorUserId: Ausloeser - wird beim Abruf herausgefiltert (niemand sieht
 --   die eigene Aktion).
+-- targetUserId: NULL = Meldung fuer alle aktiven Mitglieder des Orbits (der
+--   Normalfall). Ist ein Wert gesetzt, sieht nur dieser Nutzer die Meldung und
+--   nur sein Geraet bekommt den Push. Gedacht fuer Vorgaenge, die genau einen
+--   etwas angehen - etwa 'member_declined': Dass eine Einladung abgelehnt
+--   wurde, ist Sache des Piloten; fuer die uebrigen Co-Piloten ist jemand, der
+--   nie dabei war, keine Nachricht wert.
 -- ----------------------------------------------------------------------------
 CREATE TABLE OrbitEvent (
-    id          NVARCHAR(100)  NOT NULL PRIMARY KEY,
-    orbitId     NVARCHAR(100)  NOT NULL,
-    actorUserId NVARCHAR(100)  NULL,
-    actorName   NVARCHAR(200)  NULL,
-    type        NVARCHAR(30)   NOT NULL,
-    sphereId    NVARCHAR(100)  NULL,
-    sphereTitle NVARCHAR(200)  NULL,
-    orbitName   NVARCHAR(200)  NULL,
-    body        NVARCHAR(1000) NOT NULL,
-    createdAt   DATETIME2      NOT NULL DEFAULT GETUTCDATE()
+    id           NVARCHAR(100)  NOT NULL PRIMARY KEY,
+    orbitId      NVARCHAR(100)  NOT NULL,
+    actorUserId  NVARCHAR(100)  NULL,
+    actorName    NVARCHAR(200)  NULL,
+    type         NVARCHAR(30)   NOT NULL,
+    sphereId     NVARCHAR(100)  NULL,
+    sphereTitle  NVARCHAR(200)  NULL,
+    orbitName    NVARCHAR(200)  NULL,
+    body         NVARCHAR(1000) NOT NULL,
+    createdAt    DATETIME2      NOT NULL DEFAULT GETUTCDATE(),
+    targetUserId NVARCHAR(100)  NULL
 );
 
 CREATE INDEX IX_OrbitEvent_Orbit_CreatedAt ON OrbitEvent (orbitId, createdAt DESC);

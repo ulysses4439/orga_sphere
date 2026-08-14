@@ -10,6 +10,29 @@ class AuthService {
   static const baseUrl =
       'https://orga-sphere-api-dev-f5a0dtenanhefwb2.westeurope-01.azurewebsites.net';
 
+  /// EIN Client fuer die gesamte App – [ApiService] benutzt denselben.
+  ///
+  /// Die Kurzformen `http.get(...)`/`http.post(...)` legen intern fuer jeden
+  /// einzelnen Aufruf einen eigenen Client an und schliessen ihn danach wieder.
+  /// Jede Anfrage zahlt dadurch DNS-Aufloesung, TCP-Verbindung und
+  /// TLS-Handshake von vorn – am Schreibtisch kaum messbar, im Mobilfunk mit
+  /// dreistelligen Laufzeiten aber rund eine Sekunde pro Anfrage.
+  ///
+  /// Ein durchgehend benutzter Client haelt die Verbindung offen
+  /// (HTTP/1.1 Keep-Alive) und wickelt alle weiteren Anfragen darueber ab. Dass
+  /// der Login hier mit drin haengt, ist Absicht: Danach steht die Verbindung
+  /// bereits, und der erste Datenabgleich startet ohne Handshake.
+  ///
+  /// Bewusst ohne `close()` – der Client lebt so lange wie die App.
+  static final http.Client client = http.Client();
+
+  /// Reissleine fuer haengende Verbindungen. Ohne Zeitlimit wartet eine Anfrage
+  /// im Funkloch, bis das Betriebssystem sie irgendwann aufgibt; die App stuende
+  /// bis dahin im Ladezustand. Mit dem lokalen Zwischenspeicher im Ruecken ist
+  /// ein zuegiger Abbruch klar besser – dann zeigt die App eben den zuletzt
+  /// bekannten Stand statt eines Drehkreisels.
+  static const Duration timeout = Duration(seconds: 20);
+
   static String? _token;
   static String? _email;
   static String? _displayName;
@@ -75,14 +98,14 @@ class AuthService {
       };
 
   static Future<void> login(String email, String password) async {
-    final response = await http.post(
+    final response = await client.post(
       Uri.parse('$baseUrl/auth/login'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
         'email': email.trim().toLowerCase(),
         'password': password,
       }),
-    );
+    ).timeout(timeout);
     if (response.statusCode != 200) {
       final body = jsonDecode(response.body) as Map<String, dynamic>;
       throw Exception(body['error'] ?? 'Login fehlgeschlagen');
@@ -93,7 +116,7 @@ class AuthService {
   }
 
   static Future<void> register(String email, String password, String? displayName) async {
-    final response = await http.post(
+    final response = await client.post(
       Uri.parse('$baseUrl/auth/register'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({
@@ -102,7 +125,7 @@ class AuthService {
         if (displayName != null && displayName.trim().isNotEmpty)
           'displayName': displayName.trim(),
       }),
-    );
+    ).timeout(timeout);
     if (response.statusCode != 200) {
       final body = jsonDecode(response.body) as Map<String, dynamic>;
       throw Exception(body['error'] ?? 'Registrierung fehlgeschlagen');
@@ -129,11 +152,11 @@ class AuthService {
     final body = <String, dynamic>{};
     if (displayName != null) body['displayName'] = displayName;
     if (email != null) body['email'] = email;
-    final response = await http.patch(
+    final response = await client.patch(
       Uri.parse('$baseUrl/auth/profile'),
       headers: authHeaders,
       body: jsonEncode(body),
-    );
+    ).timeout(timeout);
     if (response.statusCode != 200) {
       final b = jsonDecode(response.body) as Map<String, dynamic>;
       throw Exception(b['error'] ?? 'Aktualisierung fehlgeschlagen');
@@ -144,14 +167,14 @@ class AuthService {
 
   static Future<void> changePassword(
       String currentPassword, String newPassword) async {
-    final response = await http.patch(
+    final response = await client.patch(
       Uri.parse('$baseUrl/auth/password'),
       headers: authHeaders,
       body: jsonEncode({
         'currentPassword': currentPassword,
         'newPassword': newPassword,
       }),
-    );
+    ).timeout(timeout);
     if (response.statusCode != 200) {
       final b = jsonDecode(response.body) as Map<String, dynamic>;
       throw Exception(b['error'] ?? 'Passwortänderung fehlgeschlagen');
@@ -159,11 +182,11 @@ class AuthService {
   }
 
   static Future<void> forgotPassword(String email) async {
-    final response = await http.post(
+    final response = await client.post(
       Uri.parse('$baseUrl/auth/forgot-password'),
       headers: {'Content-Type': 'application/json'},
       body: jsonEncode({'email': email.trim().toLowerCase()}),
-    );
+    ).timeout(timeout);
     if (response.statusCode != 200) {
       final b = jsonDecode(response.body) as Map<String, dynamic>;
       throw Exception(b['error'] ?? 'Anfrage fehlgeschlagen');

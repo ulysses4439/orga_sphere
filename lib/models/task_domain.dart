@@ -70,6 +70,17 @@ class TaskDomain {
     );
   }
 
+  /// Fuer den lokalen Zwischenspeicher – Feldnamen wie in der Server-Antwort,
+  /// damit [TaskDomain.fromJson] beide Quellen liest.
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'name': name,
+        'description': description,
+        'color': colorHex,
+        'isShoppingList': isShoppingList,
+        'myRole': myRole,
+      };
+
   Color get color {
     final hex = colorHex.replaceAll('#', '');
     return Color(int.parse('0xFF$hex'));

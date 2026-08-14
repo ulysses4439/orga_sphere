@@ -64,13 +64,17 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     // der Glocke muss dafür nicht extra angetippt werden.
     _markNotificationsRead();
     _notifications.addListener(_markNotificationsRead);
+    _taskService.loadLogs(widget.taskId);
   }
 
   @override
   void didUpdateWidget(SphereDetailContent oldWidget) {
     super.didUpdateWidget(oldWidget);
     // Desktop: das Panel wird beim Wechsel der Auswahl wiederverwendet.
-    if (oldWidget.taskId != widget.taskId) _markNotificationsRead();
+    if (oldWidget.taskId != widget.taskId) {
+      _markNotificationsRead();
+      _taskService.loadLogs(widget.taskId);
+    }
   }
 
   /// Läuft auch bei jedem Poll erneut: Ereignisse, die eintreffen während die
@@ -103,6 +107,10 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     final updated = _taskService.getTaskById(widget.taskId);
     if (updated == null) return;
     setState(() => _task = updated);
+    // Ein Abgleich kann den Verlauf als veraltet markiert haben, weil jemand
+    // anderes etwas ergaenzt hat. Dann hier nachladen – die Sphere ist ja
+    // gerade offen, initState und didUpdateWidget laufen nicht mehr.
+    if (!updated.logsLoaded) _taskService.loadLogs(widget.taskId);
     // Nur aktualisieren wenn das Feld gerade nicht bearbeitet wird
     if (!_titleFocusNode.hasFocus) {
       final newTitle = updated.title;
@@ -801,7 +809,22 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
         children: [
           Text('Aktivitätsverlauf', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 16),
-          if (task.logEntries.isEmpty)
+          // Der Verlauf wird erst beim Öffnen der Sphere geholt. Bis die
+          // Antwort da ist, darf hier nicht „Noch keine Einträge" stehen – das
+          // wäre für Spheres mit Verlauf schlicht falsch. Solange die bekannte
+          // Anzahl größer null ist, zeigen wir deshalb einen Ladehinweis.
+          if (!task.logsLoaded && task.logCount > 0)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 16),
+              child: Center(
+                child: SizedBox(
+                  width: 20,
+                  height: 20,
+                  child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            )
+          else if (task.logEntries.isEmpty)
             Padding(
               padding: const EdgeInsets.symmetric(vertical: 16),
               child: Center(

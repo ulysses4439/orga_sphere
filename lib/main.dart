@@ -4,6 +4,7 @@ import 'app_globals.dart';
 import 'screens/screens.dart';
 import 'services/auth_service.dart';
 import 'services/event_poll_service.dart';
+import 'services/local_cache.dart';
 import 'services/notification_center.dart';
 import 'services/push_service.dart';
 import 'services/task_service.dart';
@@ -110,6 +111,9 @@ class _AuthGateState extends State<AuthGate> {
     EventPollService().reset();
     NotificationCenter().clear();
     TaskService.reset();
+    // Der lokale Datenstand muss mit weg: Auf einem geteilten Geraet saehe der
+    // naechste Angemeldete sonst beim Start kurz die Spheres des Vorgaengers.
+    await LocalCache.clear();
     if (mounted) setState(() => _loggedIn = false);
   }
 
