@@ -74,7 +74,18 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
           : Form(
               key: _formKey,
               child: ListView(
-                padding: const EdgeInsets.all(16),
+                // Unten so viel Luft, wie die Systemleiste des Geraets
+                // einnimmt. Ohne das rutscht der Speichern-Knopf auf
+                // Samsung-Geraeten hinter die Navigationsleiste und ist nicht
+                // mehr erreichbar - derselbe Fehler wie seinerzeit im
+                // Aktivitaetsverlauf. Aufgefallen ist er hier erst, seit das
+                // Formular durch das Aufbewahrungsfeld laenger geworden ist.
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  16,
+                  16,
+                  16 + MediaQuery.viewPaddingOf(context).bottom,
+                ),
                 children: [
                   TextFormField(
                     controller: _nameController,

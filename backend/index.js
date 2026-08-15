@@ -1679,9 +1679,30 @@ app.post('/domains', requireAuth, async (req, res) => {
   if (behalten === null) {
     return res.status(400).json({ error: KEEP_COUNT_FEHLER });
   }
-  const id = uuidv4();
+
+  // Kennung darf vom Geraet kommen - ein offline angelegter Orbit traegt seine
+  // endgueltige Identitaet von Anfang an. Ohne das koennten Spheres, die
+  // waehrend derselben Offline-Zeit darin entstehen, gar nicht auf ihn zeigen.
+  const mitgebracht = typeof req.body.id === 'string' ? req.body.id.trim() : '';
+  const id = mitgebracht.length > 0 && mitgebracht.length <= 100 ? mitgebracht : uuidv4();
+  const commandId = commandIdFromRequest(req);
+
   try {
     const p = await getPool();
+
+    const frueher = await findHandledCommand(p, commandId, req.user.userId);
+    if (frueher) return res.json(frueher);
+
+    // Kennung schon vergeben? Dann hat ein frueherer Versuch desselben
+    // Auftrags durchgezogen und nur die Antwort ist nie angekommen.
+    const schonDa = await p.request()
+      .input('id', sql.NVarChar, id)
+      .query('SELECT * FROM TaskDomain WHERE id = @id');
+    if (schonDa.recordset.length > 0) {
+      const antwort = { ...schonDa.recordset[0], myRole: 'pilot' };
+      await rememberCommand(p, commandId, req.user.userId, 'orbit_create', antwort);
+      return res.json(antwort);
+    }
     const result = await p.request()
       .input('id',          sql.NVarChar, id)
       .input('name',        sql.NVarChar, name)
@@ -1705,7 +1726,9 @@ app.post('/domains', requireAuth, async (req, res) => {
 
     // Wer anlegt, ist Pilot – analog zu GET /domains mitliefern, damit die App
     // den neuen Orbit sofort mit den richtigen Aktionen zeichnet.
-    res.json({ ...result.recordset[0], myRole: 'pilot' });
+    const antwort = { ...result.recordset[0], myRole: 'pilot' };
+    await rememberCommand(p, commandId, req.user.userId, 'orbit_create', antwort);
+    res.json(antwort);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

@@ -2,6 +2,7 @@ import 'dart:async' show unawaited;
 
 import 'package:flutter/foundation.dart';
 import '../models/models.dart';
+import '../utils/field_limits.dart';
 import '../utils/recurrence.dart';
 import 'api_service.dart';
 import 'auth_service.dart';
@@ -644,61 +645,153 @@ class TaskService extends ChangeNotifier {
   Future<TaskDomain> createDomain(
       String name, String description, String color,
       {bool isShoppingList = false, String? icon, int? keepLandedCount}) async {
-    final domain = await ApiService.createDomain(name, description, color,
-        isShoppingList: isShoppingList,
-        icon: icon,
-        keepLandedCount: keepLandedCount);
-    _domains.add(domain);
-    _touch();
-    return domain;
+    final id = Outbox.neueKennung();
+    final commandId = Outbox.neueKennung();
+    final geschehenAm = DateTime.now();
+
+    // Lokal sofort anlegen, damit er ohne Netz sichtbar ist – und damit
+    // Spheres, die in derselben Offline-Zeit entstehen, schon auf ihn zeigen
+    // koennen.
+    final lokal = TaskDomain(
+      id: id,
+      name: name,
+      description: description,
+      colorHex: color,
+      isShoppingList: isShoppingList,
+      icon: icon,
+      keepLandedCount: keepLandedCount ?? kDefaultKeepLandedCount,
+    );
+    _domains.add(lokal);
+    notifyListeners();
+
+    try {
+      final domain = await ApiService.createDomain(name, description, color,
+          id: id,
+          isShoppingList: isShoppingList,
+          icon: icon,
+          keepLandedCount: keepLandedCount,
+          commandId: commandId);
+      final idx = _domains.indexWhere((d) => d.id == id);
+      if (idx != -1) _domains[idx] = domain;
+      _touch();
+      return domain;
+    } on OfflineException {
+      await Outbox().einreihen(OutboxCommand(
+        id: commandId,
+        kind: 'orbit_create',
+        method: 'POST',
+        path: '/domains',
+        occurredAt: geschehenAm,
+        body: {
+          'id': id,
+          'name': name,
+          'description': description,
+          'color': color,
+          'isShoppingList': isShoppingList,
+          'icon': icon,
+          'keepLandedCount': keepLandedCount,
+        },
+      ));
+      _touch();
+      return lokal;
+    } catch (e) {
+      _domains.removeWhere((d) => d.id == id);
+      notifyListeners();
+      rethrow;
+    }
+  }
+
+  /// Ersetzt einen Orbit lokal und schickt die Aenderung ab. Bei fehlender
+  /// Verbindung wandert sie in die Warteschlange statt zurueckgenommen zu
+  /// werden – wie bei den Spheres auch.
+  Future<void> _orbitAendern({
+    required String domainId,
+    required TaskDomain Function(TaskDomain) anwenden,
+    required String kind,
+    required String method,
+    required String path,
+    Map<String, dynamic>? body,
+  }) async {
+    final idx = _domains.indexWhere((d) => d.id == domainId);
+    if (idx == -1) return;
+    final vorher = _domains[idx];
+    _domains[idx] = anwenden(vorher);
+    notifyListeners();
+
+    await _aendernMitWarteschlange(
+      kind: kind,
+      method: method,
+      path: path,
+      body: body,
+      zuruecknehmen: () {
+        final i = _domains.indexWhere((d) => d.id == domainId);
+        if (i != -1) _domains[i] = vorher;
+      },
+    );
   }
 
   /// Aufbewahrung gelandeter Ausgaben je Wiederholungsserie.
-  Future<void> updateDomainKeepLanded(String domainId, int anzahl) async {
-    await ApiService.updateDomainKeepLanded(domainId, anzahl);
-    final idx = _domains.indexWhere((d) => d.id == domainId);
-    if (idx != -1) {
-      _domains[idx] = _domains[idx].copyWith(keepLandedCount: anzahl);
-    }
-    _touch();
-  }
+  Future<void> updateDomainKeepLanded(String domainId, int anzahl) =>
+      _orbitAendern(
+        domainId: domainId,
+        anwenden: (d) => d.copyWith(keepLandedCount: anzahl),
+        kind: 'orbit_keep_landed',
+        method: 'PATCH',
+        path: '/domains/$domainId/keep-landed',
+        body: {'keepLandedCount': anzahl},
+      );
 
   /// Symbol setzen. `null` oder leerer Text entfernt es wieder.
-  Future<void> updateDomainIcon(String domainId, String? icon) async {
-    await ApiService.updateDomainIcon(domainId, icon);
-    final idx = _domains.indexWhere((d) => d.id == domainId);
-    if (idx != -1) {
-      final leer = icon == null || icon.trim().isEmpty;
-      _domains[idx] = _domains[idx]
-          .copyWith(icon: leer ? null : icon, clearIcon: leer);
-    }
-    _touch();
+  Future<void> updateDomainIcon(String domainId, String? icon) {
+    final leer = icon == null || icon.trim().isEmpty;
+    return _orbitAendern(
+      domainId: domainId,
+      anwenden: (d) => d.copyWith(icon: leer ? null : icon, clearIcon: leer),
+      kind: 'orbit_icon',
+      method: 'PATCH',
+      path: '/domains/$domainId/icon',
+      body: {'icon': icon ?? ''},
+    );
   }
 
-  Future<void> renameDomain(String domainId, String name) async {
-    await ApiService.renameDomain(domainId, name);
-    final idx = _domains.indexWhere((d) => d.id == domainId);
-    if (idx != -1) {
-      _domains[idx] = _domains[idx].copyWith(name: name);
-    }
-    _touch();
-  }
+  Future<void> renameDomain(String domainId, String name) => _orbitAendern(
+        domainId: domainId,
+        anwenden: (d) => d.copyWith(name: name),
+        kind: 'orbit_rename',
+        method: 'PATCH',
+        path: '/domains/$domainId/name',
+        body: {'name': name},
+      );
 
-  Future<void> updateDomainDescription(
-      String domainId, String description) async {
-    await ApiService.updateDomainDescription(domainId, description);
-    final idx = _domains.indexWhere((d) => d.id == domainId);
-    if (idx != -1) {
-      _domains[idx] = _domains[idx].copyWith(description: description);
-    }
-    _touch();
-  }
+  Future<void> updateDomainDescription(String domainId, String description) =>
+      _orbitAendern(
+        domainId: domainId,
+        anwenden: (d) => d.copyWith(description: description),
+        kind: 'orbit_description',
+        method: 'PATCH',
+        path: '/domains/$domainId/description',
+        body: {'description': description},
+      );
 
   Future<void> deleteDomain(String domainId) async {
-    await ApiService.deleteDomain(domainId);
-    _domains.removeWhere((d) => d.id == domainId);
+    final orbit = _domains.firstWhere((d) => d.id == domainId,
+        orElse: () => throw StateError('Orbit nicht gefunden'));
+    final position = _domains.indexOf(orbit);
+    final spheres = _tasks.where((t) => t.domainId == domainId).toList();
+
+    _domains.remove(orbit);
     _tasks.removeWhere((t) => t.domainId == domainId);
-    _touch();
+    notifyListeners();
+
+    await _aendernMitWarteschlange(
+      kind: 'orbit_delete',
+      method: 'DELETE',
+      path: '/domains/$domainId',
+      zuruecknehmen: () {
+        _domains.insert(position.clamp(0, _domains.length), orbit);
+        _tasks.addAll(spheres);
+      },
+    );
   }
 
   Future<void> moveTask(String taskId, String domainId) async {

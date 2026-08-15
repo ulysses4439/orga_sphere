@@ -230,8 +230,13 @@ class ApiService {
 
   static Future<TaskDomain> createDomain(
       String name, String description, String color,
-      {bool isShoppingList = false, String? icon, int? keepLandedCount}) async {
-    final response = await _post('/domains', {
+      {required String id,
+      bool isShoppingList = false,
+      String? icon,
+      int? keepLandedCount,
+      String? commandId}) async {
+    final response = await _postMitKennung('/domains', commandId, {
+      'id': id,
       'name': name,
       'description': description,
       'color': color,
