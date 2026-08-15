@@ -2,6 +2,8 @@ import 'dart:convert';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:http/http.dart' as http;
 
+import 'outbox.dart';
+
 class AuthService {
   static const _storage = FlutterSecureStorage();
   static const _tokenKey = 'auth_token';
@@ -194,6 +196,10 @@ class AuthService {
   }
 
   static Future<void> logout() async {
+    // Wartende Aenderungen gehoeren zum abgemeldeten Konto und wuerden sonst
+    // beim naechsten Login mit fremden Rechten losgeschickt. Auch das
+    // Zwischenlager der Anhaenge wird dabei geleert.
+    await Outbox().leeren();
     _token = null;
     _email = null;
     _displayName = null;

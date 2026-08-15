@@ -1,8 +1,13 @@
+import 'dart:async' show unawaited;
+
 import 'package:flutter/foundation.dart';
 import '../models/models.dart';
+import '../utils/recurrence.dart';
 import 'api_service.dart';
 import 'auth_service.dart';
 import 'local_cache.dart';
+import 'outbox.dart';
+import 'sync_service.dart';
 
 class TaskService extends ChangeNotifier {
   static TaskService? _instance;
@@ -64,6 +69,14 @@ class TaskService extends ChangeNotifier {
   /// App sofort bedienbar und die frischen Daten schieben sich nach, sobald
   /// sie da sind.
   Future<void> _init() async {
+    // Wartende Auftraege vom letzten Mal einlesen, bevor irgendetwas gesendet
+    // wird - sie muessen vor den frischen Daten dran sein. Und Dateien
+    // wegraeumen, zu denen kein Auftrag mehr existiert: Ein Absturz zwischen
+    // "Datei kopiert" und "Auftrag gespeichert" liesse sonst Muell zurueck,
+    // den niemand mehr findet.
+    await Outbox().laden();
+    unawaited(Outbox().verwaisteDateienAufraeumen());
+
     final snapshot = await LocalCache.load(AuthService.userId);
     if (snapshot != null) {
       _apply(snapshot.domains, snapshot.tasks);
@@ -94,6 +107,11 @@ class TaskService extends ChangeNotifier {
     // Sofort melden, damit ein Tippen auf „Erneut versuchen" sichtbar wirkt.
     notifyListeners();
     try {
+      // Erst die wartenden Änderungen loswerden, dann den frischen Stand
+      // holen. Andersherum überschriebe der Serverstand gerade das, was noch
+      // gar nicht bei ihm angekommen ist – das Häkchen wäre wieder weg.
+      await SyncService().abgleichen();
+
       final data = await ApiService.sync();
       _apply(data.domains, data.tasks);
       _lastSyncAt = DateTime.now();
@@ -215,21 +233,72 @@ class TaskService extends ChangeNotifier {
     DateTime? dueDate,
     required RecurrencePattern recurrence,
   }) async {
-    final task = await ApiService.createTask(
+    // Die Kennung kommt vom Geraet. Damit traegt die Sphere ihre endgueltige
+    // Identitaet von der ersten Sekunde an - auch wenn sie erst Tage spaeter
+    // beim Server ankommt. Alles, was inzwischen daran haengt
+    // (Verlaufseintraege, Anhaenge), zeigt schon auf die richtige Kennung.
+    final id = Outbox.neueKennung();
+    final commandId = Outbox.neueKennung();
+    final geschehenAm = DateTime.now();
+
+    // Lokal sofort anlegen, damit sie ohne Netz sichtbar ist.
+    final lokal = Task(
+      id: id,
       domainId: domainId,
       title: title,
       description: description,
       startDate: startDate,
       dueDate: dueDate,
-      recurrenceFrequency: recurrence.frequency.name,
-      recurrenceInterval: recurrence.interval,
-    );
-    // Frisch angelegt heisst: garantiert ohne Verlaufseintraege. Das gleich
-    // festhalten spart der Detailansicht einen Abruf ins Leere.
-    task.logsLoaded = true;
-    _tasks.add(task);
-    _touch();
-    return task;
+      recurrence: recurrence,
+      createdAt: geschehenAm,
+      seriesId: id,
+    )..logsLoaded = true;
+    _tasks.add(lokal);
+    notifyListeners();
+
+    try {
+      final task = await ApiService.createTask(
+        id: id,
+        domainId: domainId,
+        title: title,
+        description: description,
+        startDate: startDate,
+        dueDate: dueDate,
+        recurrenceFrequency: recurrence.frequency.name,
+        recurrenceInterval: recurrence.interval,
+        commandId: commandId,
+      );
+      // Der Server ergaenzt Felder, die nur er kennt. Die Kennung bleibt.
+      task.logsLoaded = true;
+      final idx = _tasks.indexWhere((t) => t.id == id);
+      if (idx != -1) _tasks[idx] = task;
+      _touch();
+      return task;
+    } on OfflineException {
+      await Outbox().einreihen(OutboxCommand(
+        id: commandId,
+        kind: 'task_create',
+        method: 'POST',
+        path: '/tasks',
+        occurredAt: geschehenAm,
+        body: {
+          'id': id,
+          'domainId': domainId,
+          'title': title,
+          'description': description,
+          'startDate': startDate.toIso8601String(),
+          'dueDate': dueDate?.toIso8601String(),
+          'recurrenceFrequency': recurrence.frequency.name,
+          'recurrenceInterval': recurrence.interval,
+        },
+      ));
+      _touch();
+      return lokal;
+    } catch (e) {
+      _tasks.removeWhere((t) => t.id == id);
+      notifyListeners();
+      rethrow;
+    }
   }
 
   /// Spheres, deren Statuswechsel gerade beim Server liegt.
@@ -254,14 +323,36 @@ class TaskService extends ChangeNotifier {
 
     final previousStatus = task.status;
     final previousCompletedAt = task.completedAt;
+    final geschehenAm = DateTime.now();
     task.markAsDone();
     notifyListeners();
 
+    final commandId = Outbox.neueKennung();
     try {
-      final nextTask = await ApiService.markAsDone(taskId);
+      final nextTask = await ApiService.markAsDone(taskId,
+          commandId: commandId, occurredAt: geschehenAm);
       if (nextTask != null) _tasks.add(nextTask);
       _touch();
+    } on OfflineException {
+      // KEIN Zurueckspringen. Die Aenderung ist nicht falsch, sie ist nur noch
+      // nicht angekommen - genau der Fall, fuer den die Warteschlange da ist.
+      // Vorher sprang das Haekchen hier zurueck und der Nutzer sah eine
+      // Fehlermeldung, obwohl er alles richtig gemacht hatte.
+      await Outbox().einreihen(OutboxCommand(
+        id: commandId,
+        kind: 'task_done',
+        method: 'PATCH',
+        path: '/tasks/$taskId/done',
+        occurredAt: geschehenAm,
+      ));
+      // Ohne das entstuende die Folge-Sphere erst beim Abgleich - wer zwei Tage
+      // offline ist, koennte seine taegliche Sphere dann nur ein einziges Mal
+      // abhaken.
+      _folgeSphereLokalAnlegen(task);
+      _touch();
     } catch (e) {
+      // Echte Ablehnung durch den Server: Hier ist Zurueckspringen richtig.
+      //
       // Neu nachschlagen: Zwischenzeitlich kann ein Abgleich die Task-Objekte
       // ausgetauscht haben, und dann zeigt `task` auf eine verworfene Kopie.
       final current = getTaskById(taskId) ?? task;
@@ -272,6 +363,89 @@ class TaskService extends ChangeNotifier {
     } finally {
       _statusChangePending.remove(taskId);
     }
+  }
+
+  /// Schickt eine Aenderung ab, die lokal BEREITS angewandt ist.
+  ///
+  /// Der gemeinsame Weg fuer alle Aenderungen ausser dem Erledigen (das hat
+  /// wegen der Folge-Sphere seinen eigenen). Drei Ausgaenge:
+  ///
+  ///   angekommen      -> nichts weiter zu tun
+  ///   kein Netz       -> einreihen, lokaler Stand bleibt
+  ///   Server sagt nein-> [zuruecknehmen] und Fehler weiterreichen
+  ///
+  /// Die mittlere Zeile ist der ganze Punkt des Umbaus: Eine Aenderung ohne
+  /// Netz ist nicht falsch, sie ist nur noch nicht angekommen.
+  Future<void> _aendernMitWarteschlange({
+    required String kind,
+    required String method,
+    required String path,
+    Map<String, dynamic>? body,
+    required VoidCallback zuruecknehmen,
+  }) async {
+    final commandId = Outbox.neueKennung();
+    final geschehenAm = DateTime.now();
+    try {
+      await ApiService.ausfuehren(
+        method: method,
+        path: path,
+        commandId: commandId,
+        body: {...?body, 'occurredAt': geschehenAm.toIso8601String()},
+      );
+    } on OfflineException {
+      await Outbox().einreihen(OutboxCommand(
+        id: commandId,
+        kind: kind,
+        method: method,
+        path: path,
+        body: body,
+        occurredAt: geschehenAm,
+      ));
+    } catch (e) {
+      zuruecknehmen();
+      notifyListeners();
+      rethrow;
+    }
+    _touch();
+  }
+
+  /// Legt die naechste Ausgabe einer wiederkehrenden Sphere lokal an.
+  ///
+  /// Die Kennung ist BERECHENBAR und damit dieselbe, die der Server vergeben
+  /// wuerde. Legt er sie in der Zwischenzeit selbst an - sein Scheduler tut das
+  /// fuer faellige Wiederholungen -, entsteht keine zweite Zeile: Beide Seiten
+  /// meinen dieselbe.
+  ///
+  /// Die Erinnerungsuhrzeit ist hier nur eine Vorschau; der Server rechnet sie
+  /// beim Abgleich zonenrichtig nach (siehe utils/recurrence.dart).
+  void _folgeSphereLokalAnlegen(Task erledigt) {
+    if (erledigt.recurrence.frequency == RecurrenceFrequency.none) return;
+
+    final frequenz = erledigt.recurrence.frequency.name;
+    final intervall = erledigt.recurrence.interval;
+    final naechsterStart =
+        naechstesDatum(erledigt.startDate, frequenz, intervall);
+    if (naechsterStart == null) return;
+
+    final serie = erledigt.seriesId ?? erledigt.id;
+    final neueId = serienAusgabeId(serie, naechsterStart);
+    // Schon da? Dann hat ein Abgleich sie bereits gebracht.
+    if (_tasks.any((t) => t.id == neueId)) return;
+
+    _tasks.add(Task(
+      id: neueId,
+      domainId: erledigt.domainId,
+      title: erledigt.title,
+      description: erledigt.description,
+      startDate: naechsterStart,
+      dueDate: naechstesDatum(erledigt.dueDate, frequenz, intervall),
+      reminderAt: naechstesDatum(erledigt.reminderAt, frequenz, intervall),
+      recurrence: erledigt.recurrence,
+      createdAt: DateTime.now(),
+      previousTaskId: erledigt.id,
+      seriesId: serie,
+      assignedToMemberId: erledigt.assignedToMemberId,
+    ));
   }
 
   /// Holt eine erledigte Sphere zurueck – wie [markAsDone] sofort sichtbar.
@@ -286,32 +460,52 @@ class TaskService extends ChangeNotifier {
     notifyListeners();
 
     try {
-      await ApiService.reopenTask(taskId);
-      _touch();
-    } catch (e) {
-      // Neu nachschlagen: Zwischenzeitlich kann ein Abgleich die Task-Objekte
-      // ausgetauscht haben, und dann zeigt `task` auf eine verworfene Kopie.
-      final current = getTaskById(taskId) ?? task;
-      current.status = previousStatus;
-      current.completedAt = previousCompletedAt;
-      notifyListeners();
-      rethrow;
+      await _aendernMitWarteschlange(
+        kind: 'task_reopen',
+        method: 'PATCH',
+        path: '/tasks/$taskId/reopen',
+        zuruecknehmen: () {
+          // Neu nachschlagen: Zwischenzeitlich kann ein Abgleich die
+          // Task-Objekte ausgetauscht haben, und dann zeigt `task` auf eine
+          // verworfene Kopie.
+          final current = getTaskById(taskId) ?? task;
+          current.status = previousStatus;
+          current.completedAt = previousCompletedAt;
+        },
+      );
     } finally {
       _statusChangePending.remove(taskId);
     }
   }
 
   Future<void> deleteTask(String taskId) async {
-    await ApiService.deleteTask(taskId);
-    _tasks.removeWhere((t) => t.id == taskId);
-    _touch();
+    final task = getTaskById(taskId);
+    if (task == null) return;
+    final position = _tasks.indexOf(task);
+    _tasks.remove(task);
+    notifyListeners();
+
+    await _aendernMitWarteschlange(
+      kind: 'task_delete',
+      method: 'DELETE',
+      path: '/tasks/$taskId',
+      zuruecknehmen: () => _tasks.insert(position.clamp(0, _tasks.length), task),
+    );
   }
 
   Future<void> startTask(String taskId) async {
-    await ApiService.startTask(taskId);
     final task = getTaskById(taskId);
-    if (task != null) task.status = TaskStatus.inProgress;
-    _touch();
+    if (task == null) return;
+    final vorher = task.status;
+    task.status = TaskStatus.inProgress;
+    notifyListeners();
+
+    await _aendernMitWarteschlange(
+      kind: 'task_start',
+      method: 'PATCH',
+      path: '/tasks/$taskId/start',
+      zuruecknehmen: () => task.status = vorher,
+    );
   }
 
   Future<void> addLogEntry(String taskId, String text,
@@ -331,17 +525,35 @@ class TaskService extends ChangeNotifier {
   }
 
   Future<void> updateTaskTitle(String taskId, String title) async {
-    await ApiService.updateTaskTitle(taskId, title);
     final task = getTaskById(taskId);
-    if (task != null) task.title = title;
-    _touch();
+    if (task == null) return;
+    final vorher = task.title;
+    task.title = title;
+    notifyListeners();
+
+    await _aendernMitWarteschlange(
+      kind: 'task_title',
+      method: 'PATCH',
+      path: '/tasks/$taskId/title',
+      body: {'title': title},
+      zuruecknehmen: () => task.title = vorher,
+    );
   }
 
   Future<void> updateTaskDescription(String taskId, String description) async {
-    await ApiService.updateTaskDescription(taskId, description);
     final task = getTaskById(taskId);
-    if (task != null) task.description = description;
-    _touch();
+    if (task == null) return;
+    final vorher = task.description;
+    task.description = description;
+    notifyListeners();
+
+    await _aendernMitWarteschlange(
+      kind: 'task_description',
+      method: 'PATCH',
+      path: '/tasks/$taskId/description',
+      body: {'description': description},
+      zuruecknehmen: () => task.description = vorher,
+    );
   }
 
   Future<void> updateTaskSchedule(
@@ -390,21 +602,43 @@ class TaskService extends ChangeNotifier {
     String? displayName,
     String? email,
   }) async {
-    await ApiService.assignTask(taskId, memberId);
     final task = getTaskById(taskId);
-    if (task != null) {
-      task.assignedToMemberId = memberId;
-      task.assignedToName = memberId != null ? displayName : null;
-      task.assignedToEmail = memberId != null ? email : null;
-    }
-    _touch();
+    if (task == null) return;
+    final vorherId = task.assignedToMemberId;
+    final vorherName = task.assignedToName;
+    final vorherMail = task.assignedToEmail;
+    task.assignedToMemberId = memberId;
+    task.assignedToName = memberId != null ? displayName : null;
+    task.assignedToEmail = memberId != null ? email : null;
+    notifyListeners();
+
+    await _aendernMitWarteschlange(
+      kind: 'task_assign',
+      method: 'PATCH',
+      path: '/tasks/$taskId/assignee',
+      body: {'memberId': memberId},
+      zuruecknehmen: () {
+        task.assignedToMemberId = vorherId;
+        task.assignedToName = vorherName;
+        task.assignedToEmail = vorherMail;
+      },
+    );
   }
 
   Future<void> setReminder(String taskId, DateTime? reminderAt) async {
-    await ApiService.setReminder(taskId, reminderAt);
     final task = getTaskById(taskId);
-    if (task != null) task.reminderAt = reminderAt;
-    _touch();
+    if (task == null) return;
+    final vorher = task.reminderAt;
+    task.reminderAt = reminderAt;
+    notifyListeners();
+
+    await _aendernMitWarteschlange(
+      kind: 'task_reminder',
+      method: 'PATCH',
+      path: '/tasks/$taskId/reminder',
+      body: {'reminderAt': reminderAt?.toIso8601String()},
+      zuruecknehmen: () => task.reminderAt = vorher,
+    );
   }
 
   Future<TaskDomain> createDomain(
@@ -468,10 +702,19 @@ class TaskService extends ChangeNotifier {
   }
 
   Future<void> moveTask(String taskId, String domainId) async {
-    await ApiService.moveTask(taskId, domainId);
     final task = getTaskById(taskId);
-    if (task != null) task.domainId = domainId;
-    _touch();
+    if (task == null) return;
+    final vorher = task.domainId;
+    task.domainId = domainId;
+    notifyListeners();
+
+    await _aendernMitWarteschlange(
+      kind: 'task_move',
+      method: 'PATCH',
+      path: '/tasks/$taskId/domain',
+      body: {'domainId': domainId},
+      zuruecknehmen: () => task.domainId = vorher,
+    );
   }
 
   /// Nach einer lokal nachgezogenen Aenderung: Oberflaeche benachrichtigen und

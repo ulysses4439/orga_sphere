@@ -40,6 +40,13 @@ const int kMaxAttachmentsPerEntry = 5;
 /// Groesse einer einzelnen Datei. Spiegelt ATTACHMENT_MAX_BYTES im Backend.
 const int kMaxAttachmentBytes = 10 * 1024 * 1024;
 
+/// Wie viel im Zwischenlager fuer noch nicht hochgeladene Anhaenge liegen darf.
+///
+/// Ohne Grenze koennte jemand ueber Tage offline so viele Dateien anhaengen,
+/// dass der Speicher des Geraets volllaeuft. Darueber sagt die App ehrlich,
+/// dass dieser Anhang eine Verbindung braucht.
+const int kMaxStagedBytes = 100 * 1024 * 1024;
+
 /// Vorgabe fuer TaskDomain.keepLandedCount – so viele gelandete Ausgaben je
 /// Wiederholungsserie bleiben erhalten. Spiegelt DEFAULT_KEEP_LANDED_COUNT im
 /// Backend.

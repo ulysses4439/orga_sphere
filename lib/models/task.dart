@@ -15,6 +15,16 @@ class Task {
   DateTime? completedAt;
   DateTime? reminderAt;
   final String? previousTaskId;
+
+  /// Klammert alle Ausgaben einer Wiederholung zusammen – die id der ERSTEN
+  /// Sphere der Serie.
+  ///
+  /// Das Gerät braucht sie, um ohne Netz die Kennung der nächsten Ausgabe
+  /// selbst zu berechnen (siehe utils/recurrence.dart). Ohne sie könnte es die
+  /// Folge-Sphere nicht so benennen, wie der Server es täte – und beim
+  /// Abgleich entstünden zwei Zeilen für denselben Termin.
+  final String? seriesId;
+
   // Zuweisung an ein OrbitMember (Pilot/Co-Pilot). Name/E-Mail kommen
   // zur Anzeige aus dem Backend-JOIN und werden nur lesend genutzt.
   String? assignedToMemberId;
@@ -57,6 +67,7 @@ class Task {
     this.completedAt,
     this.reminderAt,
     this.previousTaskId,
+    this.seriesId,
     this.assignedToMemberId,
     this.assignedToName,
     this.assignedToEmail,
@@ -91,6 +102,7 @@ class Task {
           ? DateTime.parse(json['reminderAt'] as String)
           : null,
       previousTaskId: json['previousTaskId'] as String?,
+      seriesId: json['seriesId'] as String?,
       assignedToMemberId: json['assignedToMemberId'] as String?,
       assignedToName: json['assignedToName'] as String?,
       assignedToEmail: json['assignedToEmail'] as String?,
@@ -119,6 +131,7 @@ class Task {
         'completedAt': completedAt?.toIso8601String(),
         'reminderAt': reminderAt?.toIso8601String(),
         'previousTaskId': previousTaskId,
+        'seriesId': seriesId,
         'assignedToMemberId': assignedToMemberId,
         'assignedToName': assignedToName,
         'assignedToEmail': assignedToEmail,

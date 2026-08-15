@@ -17,6 +17,7 @@ import '../widgets/task_list_item.dart';
 import '../widgets/sphere_detail_content.dart';
 import '../widgets/reminder_picker_dialog.dart';
 import '../widgets/orbit_icon_picker.dart';
+import '../widgets/outbox_banner.dart';
 import '../widgets/orbit_members_bar.dart';
 import '../widgets/simple_list_widgets.dart';
 import '../widgets/user_account_menu.dart';
@@ -417,6 +418,7 @@ class _TaskListScreenState extends State<TaskListScreen>
           }
           return Column(
             children: [
+              const OutboxBanner(),
               _buildStaleBanner(),
               _buildInvitationBanners(),
               Expanded(child: _buildDesktopWorkspace()),
@@ -1040,6 +1042,7 @@ class _TaskListScreenState extends State<TaskListScreen>
             style: const TextStyle(color: Colors.white38, fontSize: 11),
           ),
         ),
+        const OutboxBanner(),
         _buildStaleBanner(),
         _buildInvitationBanners(),
         if (missed.isNotEmpty) _buildMobileMissedBanner(missed),

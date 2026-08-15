@@ -1,4 +1,6 @@
+import 'dart:async' show TimeoutException;
 import 'dart:convert';
+import 'dart:io' show SocketException, HandshakeException;
 import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' show MediaType;
@@ -42,9 +44,89 @@ class ApiService {
           headers: _headers, body: body == null ? null : jsonEncode(body))
       .timeout(AuthService.timeout);
 
+  /// Führt einen Aufruf aus und übersetzt Netzprobleme in [OfflineException].
+  ///
+  /// Ohne diese Übersetzung sind „kein Netz" und „Server sagt nein" für den
+  /// Aufrufer nicht auseinanderzuhalten — beides käme als nackte `Exception`
+  /// an. Genau daran hing bisher, dass eine Änderung im Funkloch verworfen
+  /// wurde, statt in die Warteschlange zu gehen.
+  static Future<T> mitNetzpruefung<T>(Future<T> Function() aufruf) async {
+    try {
+      return await aufruf();
+    } on SocketException catch (e) {
+      throw OfflineException(e.osError?.message ?? e.message);
+    } on http.ClientException catch (e) {
+      throw OfflineException(e.message);
+    } on TimeoutException {
+      throw const OfflineException('Zeitüberschreitung');
+    } on HandshakeException catch (e) {
+      throw OfflineException(e.message);
+    }
+  }
+
+  /// POST mit Auftragskennung, damit ein Wiedergänger beim Server nur einmal
+  /// wirkt. Netzfehler kommen als [OfflineException] heraus.
+  static Future<http.Response> _postMitKennung(
+      String path, String? commandId, Object? body) {
+    return mitNetzpruefung(() => _client
+        .post(
+          Uri.parse('$_baseUrl$path'),
+          headers: {..._headers, 'X-Command-Id': ?commandId},
+          body: body == null ? null : jsonEncode(body),
+        )
+        .timeout(AuthService.timeout));
+  }
+
+  /// Führt einen beliebigen Auftrag aus der Warteschlange aus.
+  ///
+  /// Absichtlich allgemein: Die Warteschlange kennt nur Methode, Pfad und
+  /// Rumpf und braucht kein Wissen über die dreizehn Auftragsarten. Die
+  /// Auftragskennung geht als `X-Command-Id` mit — daran erkennt der Server
+  /// einen Wiedergänger und führt ihn nicht ein zweites Mal aus.
+  static Future<Map<String, dynamic>> ausfuehren({
+    required String method,
+    required String path,
+    required String commandId,
+    Map<String, dynamic>? body,
+  }) async {
+    return mitNetzpruefung(() async {
+      final uri = Uri.parse('$_baseUrl$path');
+      final headers = {..._headers, 'X-Command-Id': commandId};
+      final rumpf = body == null ? null : jsonEncode(body);
+
+      final http.Response response;
+      switch (method) {
+        case 'POST':
+          response = await _client.post(uri, headers: headers, body: rumpf)
+              .timeout(AuthService.timeout);
+        case 'PATCH':
+          response = await _client.patch(uri, headers: headers, body: rumpf)
+              .timeout(AuthService.timeout);
+        case 'DELETE':
+          response = await _client.delete(uri, headers: headers, body: rumpf)
+              .timeout(AuthService.timeout);
+        default:
+          throw ArgumentError('Unbekannte Methode: $method');
+      }
+      _checkStatus(response);
+      if (response.body.isEmpty) return <String, dynamic>{};
+      final gelesen = jsonDecode(response.body);
+      return gelesen is Map<String, dynamic> ? gelesen : <String, dynamic>{};
+    });
+  }
+
   static void _checkStatus(http.Response response) {
     if (response.statusCode == 401) {
       throw const UnauthorizedException();
+    }
+    // Der Server ist da, kann aber gerade nicht: Neustart nach einer
+    // Auslieferung, Überlastung, Wartung. Für die Warteschlange ist das
+    // dasselbe wie kein Netz – erneut versuchen, nichts verwerfen.
+    if (response.statusCode == 502 ||
+        response.statusCode == 503 ||
+        response.statusCode == 504) {
+      throw OfflineException('Server vorübergehend nicht verfügbar '
+          '(${response.statusCode})');
     }
     if (response.statusCode < 200 || response.statusCode >= 300) {
       String msg = 'API-Fehler ${response.statusCode}';
@@ -276,11 +358,33 @@ class ApiService {
     required List<int> bytes,
     required String fileName,
     required String contentType,
+    String? attachmentId,
+    String? commandId,
+  }) async {
+    return mitNetzpruefung(() => _uploadAttachment(taskId,
+        bytes: bytes,
+        fileName: fileName,
+        contentType: contentType,
+        attachmentId: attachmentId,
+        commandId: commandId));
+  }
+
+  static Future<SphereAttachment> _uploadAttachment(
+    String taskId, {
+    required List<int> bytes,
+    required String fileName,
+    required String contentType,
+    String? attachmentId,
+    String? commandId,
   }) async {
     final request = http.MultipartRequest(
       'POST',
       Uri.parse('$_baseUrl/tasks/$taskId/attachments'),
     );
+    // Beide Kennungen als Formularfeld: Bei einer mehrteiligen Uebertragung
+    // gibt es keinen JSON-Koerper, in den sie sonst passen wuerden.
+    if (attachmentId != null) request.fields['id'] = attachmentId;
+    if (commandId != null) request.fields['commandId'] = commandId;
     // Content-Type muss hier weg: Bei einer mehrteiligen Übertragung setzt ihn
     // das Paket selbst, samt der Trennmarke zwischen den Teilen. Ein von Hand
     // gesetztes application/json würde die Übertragung unlesbar machen.
@@ -348,7 +452,14 @@ class ApiService {
     return data.map((j) => Task.fromJson(j as Map<String, dynamic>)).toList();
   }
 
+  /// Legt eine Sphere an.
+  ///
+  /// [id] wird vom Gerät vergeben, damit eine offline angelegte Sphere von
+  /// Anfang an ihre endgültige Kennung trägt. Ohne das müsste sie zunächst mit
+  /// einer Ersatzkennung leben und beim Abgleich umgehängt werden – samt
+  /// allem, was inzwischen daran hängt.
   static Future<Task> createTask({
+    required String id,
     required String domainId,
     required String title,
     required String description,
@@ -356,8 +467,10 @@ class ApiService {
     DateTime? dueDate,
     required String recurrenceFrequency,
     required int recurrenceInterval,
+    String? commandId,
   }) async {
-    final response = await _post('/tasks', {
+    final response = await _postMitKennung('/tasks', commandId, {
+      'id': id,
       'domainId': domainId,
       'title': title,
       'description': description,
@@ -372,12 +485,28 @@ class ApiService {
     return Task.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
   }
 
-  static Future<Task?> markAsDone(String taskId) async {
-    final response = await _patch('/tasks/$taskId/done');
-    _checkStatus(response);
-    final body = jsonDecode(response.body) as Map<String, dynamic>;
-    final next = body['nextTask'];
-    return next != null ? Task.fromJson(next as Map<String, dynamic>) : null;
+  /// Hakt eine Sphere ab.
+  ///
+  /// [commandId] und [occurredAt] gehören zusammen: Scheitert der Aufruf am
+  /// Netz, wandert derselbe Auftrag mit derselben Kennung in die Warteschlange
+  /// und wird später erneut gesendet — der Server führt ihn dann nur einmal
+  /// aus. [occurredAt] sorgt dafür, dass im Verlauf der Zeitpunkt des Abhakens
+  /// steht und nicht der des Abgleichs.
+  static Future<Task?> markAsDone(String taskId,
+      {String? commandId, DateTime? occurredAt}) async {
+    return mitNetzpruefung(() async {
+      final response = await _client
+          .patch(
+            Uri.parse('$_baseUrl/tasks/$taskId/done'),
+            headers: {..._headers, 'X-Command-Id': ?commandId},
+            body: jsonEncode({'occurredAt': ?occurredAt?.toIso8601String()}),
+          )
+          .timeout(AuthService.timeout);
+      _checkStatus(response);
+      final body = jsonDecode(response.body) as Map<String, dynamic>;
+      final next = body['nextTask'];
+      return next != null ? Task.fromJson(next as Map<String, dynamic>) : null;
+    });
   }
 
   static Future<void> startTask(String taskId) async {
@@ -536,4 +665,18 @@ class UnauthorizedException implements Exception {
   const UnauthorizedException();
   @override
   String toString() => 'Sitzung abgelaufen. Bitte erneut anmelden.';
+}
+
+/// Der Server war nicht erreichbar – Funkloch, Flugmodus, Zeitüberschreitung
+/// oder ein gerade neu startender App Service.
+///
+/// Streng zu unterscheiden von einer echten Ablehnung: Eine Änderung, die
+/// hieran scheitert, ist **nicht verloren**. Sie muss nur später erneut
+/// gesendet werden. Genau diese Unterscheidung fehlte bisher — deshalb sprang
+/// ein Häkchen im Funkloch zurück, statt in die Warteschlange zu wandern.
+class OfflineException implements Exception {
+  final String grund;
+  const OfflineException(this.grund);
+  @override
+  String toString() => 'Keine Verbindung zum Server ($grund)';
 }

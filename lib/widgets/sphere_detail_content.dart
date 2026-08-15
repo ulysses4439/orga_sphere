@@ -1,4 +1,4 @@
-import 'dart:io' show File;
+import 'dart:io' show File, Platform;
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart'
@@ -11,6 +11,7 @@ import '../utils/attachment_upload.dart';
 import '../services/api_service.dart';
 import '../services/attachment_files.dart';
 import '../services/auth_service.dart';
+import '../services/outbox.dart';
 import '../services/notification_center.dart';
 import '../services/task_service.dart';
 import '../theme/app_colors.dart';
@@ -215,6 +216,13 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
   /// Eine Datei hochladen und in die Warteliste des Formulars legen.
   /// Gibt `false` zurück, wenn es nicht geklappt hat.
   Future<bool> _uploadOne(Uint8List bytes, String name) async {
+    // Kennung vom Gerät: So trägt der Anhang seine endgültige Identität auch
+    // dann, wenn er erst später hochgeladen wird.
+    final anhangId = Outbox.neueKennung();
+    final commandId = Outbox.neueKennung();
+    final typ = mimeFuerDateiname(name);
+    final geschehenAm = DateTime.now();
+
     try {
       // Nur retten, was sonst abgewiesen würde – siehe verkleinereWennNoetig.
       if (bytes.length > kMaxAttachmentBytes && istBildDateiname(name)) {
@@ -230,13 +238,89 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
         widget.taskId,
         bytes: bytes,
         fileName: name,
-        contentType: mimeFuerDateiname(name),
+        contentType: typ,
+        attachmentId: anhangId,
+        commandId: commandId,
       );
       if (!mounted) return false;
       setState(() => _pendingUploads = [..._pendingUploads, hochgeladen]);
       return true;
+    } on OfflineException {
+      // Ohne Netz: Datei ins Zwischenlager kopieren und den Upload einreihen.
+      // Bewusst eine Kopie und nicht nur der Pfad – das Original könnte
+      // gelöscht oder verschoben werden, bevor die Verbindung zurück ist.
+      final ok = await _anhangZwischenlagern(
+        anhangId: anhangId,
+        commandId: commandId,
+        bytes: bytes,
+        name: name,
+        typ: typ,
+        geschehenAm: geschehenAm,
+      );
+      if (ok && mounted) {
+        setState(() => _pendingUploads = [
+              ..._pendingUploads,
+              SphereAttachment(
+                id: anhangId,
+                taskId: widget.taskId,
+                fileName: name,
+                contentType: typ,
+                sizeBytes: bytes.length,
+                isImage: istBildDateiname(name),
+                createdAt: geschehenAm,
+              ),
+            ]);
+      }
+      return ok;
     } catch (e) {
       _zeigeHinweis('Hochladen fehlgeschlagen: $e');
+      return false;
+    }
+  }
+
+  /// Legt die Datei im Zwischenlager ab und reiht den Upload ein.
+  Future<bool> _anhangZwischenlagern({
+    required String anhangId,
+    required String commandId,
+    required Uint8List bytes,
+    required String name,
+    required String typ,
+    required DateTime geschehenAm,
+  }) async {
+    try {
+      final ordner = await Outbox.stagingOrdner();
+      // Gesamtgröße begrenzen: Der Speicher des Geräts soll nicht volllaufen,
+      // wenn jemand lange offline viele Dateien anhängt.
+      var belegt = 0;
+      await for (final e in ordner.list()) {
+        if (e is File) belegt += (await e.length()).toInt();
+      }
+      if (belegt + bytes.length > kMaxStagedBytes) {
+        _zeigeHinweis('Zu viele Anhänge warten schon auf die Übertragung. '
+            'Dieser braucht eine Verbindung.');
+        return false;
+      }
+
+      final datei = File('${ordner.path}${Platform.pathSeparator}$anhangId');
+      await datei.writeAsBytes(bytes);
+
+      await Outbox().einreihen(OutboxCommand(
+        id: commandId,
+        kind: 'attachment_upload',
+        method: 'POST',
+        path: '/tasks/${widget.taskId}/attachments',
+        occurredAt: geschehenAm,
+        stagedFilePath: datei.path,
+        body: {
+          'id': anhangId,
+          'taskId': widget.taskId,
+          'fileName': name,
+          'contentType': typ,
+        },
+      ));
+      return true;
+    } catch (e) {
+      _zeigeHinweis('Anhang konnte nicht zwischengelagert werden: $e');
       return false;
     }
   }
