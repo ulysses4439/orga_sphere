@@ -7,6 +7,7 @@ import '../services/task_service.dart';
 import '../theme/app_colors.dart';
 import '../utils/date_format.dart';
 import '../utils/field_limits.dart';
+import 'attachment_widgets.dart';
 import 'reminder_picker_dialog.dart';
 
 /// Reusable sphere detail body – used as embedded panel (desktop) and
@@ -47,6 +48,12 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
   String _lastSavedTitle = '';
   bool _isBusy = false;
 
+  /// Anhänge dieser Sphere. Bewusst im Widget statt im TaskService: Sie hängen
+  /// nur an der geöffneten Detailansicht, und der Dienst hält den Zwischen-
+  /// speicher für die Listenansichten – dort werden Anhänge nicht gebraucht.
+  List<SphereAttachment> _attachments = [];
+  bool _attachmentsLoaded = false;
+
   @override
   void initState() {
     super.initState();
@@ -65,6 +72,79 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     _markNotificationsRead();
     _notifications.addListener(_markNotificationsRead);
     _taskService.loadLogs(widget.taskId);
+    _loadAttachments();
+  }
+
+  Future<void> _loadAttachments() async {
+    try {
+      final attachments = await ApiService.getAttachments(widget.taskId);
+      if (!mounted) return;
+      setState(() {
+        _attachments = attachments;
+        _attachmentsLoaded = true;
+      });
+    } catch (e) {
+      // Anhänge sind Beiwerk: Wer offline ist oder einen Aussetzer erwischt,
+      // soll trotzdem Titel, Beschreibung und Verlauf sehen. Beim nächsten
+      // Öffnen wird es erneut versucht. Der Grund gehört aber ins Protokoll –
+      // ein stilles Verschlucken macht genau die Fehlersuche unmöglich, für
+      // die man es später braucht.
+      debugPrint('[Anhänge] konnten nicht geladen werden: $e');
+      if (mounted) setState(() => _attachmentsLoaded = true);
+    }
+  }
+
+  /// Anhänge eines bestimmten Verlaufseintrags. Solange die Liste noch lädt,
+  /// bleibt sie leer – lieber kurz nichts anzeigen als Kacheln aufblitzen zu
+  /// lassen, während man schon liest.
+  List<SphereAttachment> _attachmentsOf(String logEntryId) => _attachmentsLoaded
+      ? _attachments.where((a) => a.logEntryId == logEntryId).toList()
+      : const [];
+
+  Future<void> _openAttachment(SphereAttachment attachment) async {
+    if (attachment.isExpired) {
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text('„${attachment.fileName}" wurde nach einem Jahr entfernt.'),
+      ));
+      return;
+    }
+    if (attachment.isImage) {
+      await showAttachmentViewer(context, attachment);
+      return;
+    }
+    // Andere Dateien lassen sich vorerst nur ansehen, nicht speichern oder
+    // öffnen – dafür braucht jede Plattform ihren eigenen Weg (Speichern-Dialog
+    // unter Windows, Download-Ordner bzw. Teilen auf Android). Kommt als
+    // eigener Schritt; bis dahin wenigstens die Angaben zur Datei statt eines
+    // Antippens, das nichts tut.
+    await showDialog<void>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: Text(attachment.fileName),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Größe: ${attachment.readableSize}'),
+            if (attachment.uploadedByName != null)
+              Text('Hochgeladen von: ${attachment.uploadedByName}'),
+            Text('Am: ${formatDate(attachment.createdAt)}'),
+            const SizedBox(height: 12),
+            const Text(
+              'Das Speichern und Öffnen von Dateien wird gerade eingebaut. '
+              'Bilder lassen sich bereits in voller Größe ansehen.',
+              style: TextStyle(fontSize: 12),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('Schließen'),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
@@ -1182,57 +1262,84 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
         final entry = entries[index];
         final isLast = index == entries.length - 1;
 
+        final attachments = _attachmentsOf(entry.id);
+
         return Column(
           children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Column(
-                  children: [
-                    Container(
-                      width: 12,
-                      height: 12,
-                      decoration: BoxDecoration(
-                        shape: BoxShape.circle,
-                        color: AppColors.teal,
-                        border: Border.all(color: AppColors.appWhite, width: 2),
-                      ),
-                    ),
-                    if (!isLast) Container(width: 2, height: 60, color: AppColors.lightGrey),
-                  ],
-                ),
-                const SizedBox(width: 16),
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            entry.user,
-                            style: Theme.of(context)
-                                .textTheme
-                                .titleSmall
-                                ?.copyWith(fontWeight: FontWeight.bold),
+            // IntrinsicHeight, damit die Verbindungslinie mitwaechst: Vorher
+            // hatte sie feste 60 Pixel, was genau so lange passte, wie jeder
+            // Eintrag aus zwei Zeilen Text bestand. Mit Bildern darunter waere
+            // sie ins Leere gelaufen.
+            IntrinsicHeight(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  SizedBox(
+                    width: 12,
+                    child: Column(
+                      children: [
+                        Container(
+                          width: 12,
+                          height: 12,
+                          decoration: BoxDecoration(
+                            shape: BoxShape.circle,
+                            color: AppColors.teal,
+                            border: Border.all(color: AppColors.appWhite, width: 2),
                           ),
-                          Text(
-                            _formatDate(entry.timestamp),
-                            style: Theme.of(context)
-                                .textTheme
-                                .bodySmall
-                                ?.copyWith(color: Colors.grey[600]),
+                        ),
+                        if (!isLast)
+                          Expanded(
+                            child: Container(width: 2, color: AppColors.lightGrey),
+                          ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Text(
+                              entry.user,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .titleSmall
+                                  ?.copyWith(fontWeight: FontWeight.bold),
+                            ),
+                            Text(
+                              _formatDate(entry.timestamp),
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(color: Colors.grey[600]),
+                            ),
+                          ],
+                        ),
+                        // Ein Eintrag darf inzwischen auch nur aus Anhaengen
+                        // bestehen – dann entfaellt die Textzeile ganz, statt
+                        // eine leere Luecke zu lassen.
+                        if (entry.text.trim().isNotEmpty) ...[
+                          const SizedBox(height: 4),
+                          Text(entry.text,
+                              style: Theme.of(context).textTheme.bodyMedium),
+                        ],
+                        if (attachments.isNotEmpty) ...[
+                          const SizedBox(height: 8),
+                          AttachmentStrip(
+                            attachments: attachments,
+                            onOpen: _openAttachment,
                           ),
                         ],
-                      ),
-                      const SizedBox(height: 4),
-                      Text(entry.text, style: Theme.of(context).textTheme.bodyMedium),
-                    ],
+                        if (!isLast) const SizedBox(height: 16),
+                      ],
+                    ),
                   ),
-                ),
-              ],
+                ],
+              ),
             ),
-            if (!isLast) const SizedBox(height: 16),
           ],
         );
       }),

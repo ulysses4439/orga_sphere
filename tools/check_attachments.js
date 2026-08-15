@@ -53,9 +53,22 @@ const MIME_NACH_ENDUNG = {
 // Argumente und Eingabe
 // ---------------------------------------------------------------------------
 
+// Liest den Wert hinter --name.
+//
+// Alles bis zum naechsten --schalter wird wieder zusammengesetzt: Die Konsole
+// zerlegt einen Pfad wie C:\Screenshot 2026-08-15 110415.png an den
+// Leerzeichen in drei Bruchstuecke, und ohne Anfuehrungszeichen kaeme sonst
+// nur "C:\Screenshot" an. Mit Anfuehrungszeichen funktioniert es weiterhin
+// genauso - dann ist es eben nur ein Bruchstueck.
 function argument(name) {
   const i = process.argv.indexOf(`--${name}`);
-  return i >= 0 ? process.argv[i + 1] : undefined;
+  if (i < 0) return undefined;
+  const teile = [];
+  for (let k = i + 1; k < process.argv.length; k++) {
+    if (process.argv[k].startsWith('--')) break;
+    teile.push(process.argv[k]);
+  }
+  return teile.length > 0 ? teile.join(' ') : undefined;
 }
 
 function frage(text, versteckt = false) {
@@ -153,7 +166,13 @@ async function main() {
   let bildName = 'selbsttest.png';
   let bildTyp = 'image/png';
   if (eigeneDatei) {
-    if (!fs.existsSync(eigeneDatei)) throw new Error(`Datei nicht gefunden: ${eigeneDatei}`);
+    if (!fs.existsSync(eigeneDatei)) {
+      throw new Error(
+        `Datei nicht gefunden: ${eigeneDatei}\n` +
+          '         Enthaelt der Pfad Leerzeichen? Dann in Anfuehrungszeichen setzen:\n' +
+          '         node tools/check_attachments.js --datei "C:\\Ordner\\mein bild.png"'
+      );
+    }
     bildInhalt = fs.readFileSync(eigeneDatei);
     bildName = path.basename(eigeneDatei);
     const endung = path.extname(bildName).slice(1).toLowerCase();
@@ -162,6 +181,8 @@ async function main() {
   }
 
   let orbitId = null;
+  let orbitName = null;
+  const behalten = process.argv.includes('--behalten');
 
   try {
     // -- 1. Anmelden ------------------------------------------------------
@@ -176,12 +197,15 @@ async function main() {
 
     // -- 2. Testumgebung anlegen -----------------------------------------
     console.log('\n2. Testumgebung anlegen');
+    orbitName = 'OrgaSphere Selbsttest ' + new Date().toISOString().slice(11, 19);
     const orbit = await mussKlappen(
       await api('/domains', {
         method: 'POST',
         json: {
-          name: 'OrgaSphere Selbsttest ' + new Date().toISOString().slice(11, 19),
-          description: 'Wird vom Selbsttest automatisch wieder geloescht.',
+          name: orbitName,
+          description: behalten
+            ? 'Testdaten zum Ansehen. Kann von Hand geloescht werden.'
+            : 'Wird vom Selbsttest automatisch wieder geloescht.',
           color: '#F5F5F5',
         },
       }),
@@ -312,6 +336,19 @@ async function main() {
       // ueberschritten ist - dann kommt statt einer Antwort ein
       // Verbindungsfehler. Abgewiesen wurde die Datei so oder so.
       ok('zu grosse Datei abgewiesen', 'Verbindung beendet: ' + err.message);
+    }
+
+    // Mit --behalten endet der Test hier: Orbit, Sphere und beide Anhaenge
+    // bleiben stehen, damit man sie in der App ansehen kann. Sonst waere die
+    // Anzeige nicht pruefbar, solange das Hochladen aus der App noch fehlt.
+    if (behalten) {
+      console.log('\n--behalten: Testdaten bleiben stehen.');
+      console.log(`  Orbit:  ${orbitName}`);
+      console.log('  Sphere: Testsphere fuer Anhaenge');
+      console.log('  Darin ein Verlaufseintrag mit einem Bild und einer Textdatei.');
+      console.log('  Zum Aufraeumen den Orbit in der App loeschen.');
+      orbitId = null;
+      return;
     }
 
     // -- 8. Einzelnen Anhang loeschen -------------------------------------

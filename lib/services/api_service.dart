@@ -234,6 +234,41 @@ class ApiService {
   }
 
   // -----------------------------------------------------------------------
+  // Dateianhaenge
+  // -----------------------------------------------------------------------
+
+  static Future<List<SphereAttachment>> getAttachments(String taskId) async {
+    final response = await http.get(
+      Uri.parse('$_baseUrl/tasks/$taskId/attachments'),
+      headers: _headers,
+    );
+    _checkStatus(response);
+    final List<dynamic> data = jsonDecode(response.body);
+    return data
+        .map((j) => SphereAttachment.fromJson(j as Map<String, dynamic>))
+        .toList();
+  }
+
+  static Future<void> deleteAttachment(String attachmentId) async {
+    final response = await http.delete(
+      Uri.parse('$_baseUrl/attachments/$attachmentId'),
+      headers: _headers,
+    );
+    _checkStatus(response);
+  }
+
+  /// Adresse, unter der die Datei selbst liegt.
+  ///
+  /// Sie zeigt bewusst auf das Backend und nicht in den Speicher: So gilt für
+  /// jede Datei dieselbe Zugriffsprüfung wie für die Sphere. Der Aufruf braucht
+  /// deshalb den Anmeldekopf – [attachmentHeaders] liefert ihn, etwa für
+  /// `Image.network`.
+  static String attachmentContentUrl(String attachmentId) =>
+      '$_baseUrl/attachments/$attachmentId/content';
+
+  static Map<String, String> get attachmentHeaders => _headers;
+
+  // -----------------------------------------------------------------------
   // Tasks
   // -----------------------------------------------------------------------
 

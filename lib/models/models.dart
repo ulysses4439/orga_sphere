@@ -6,3 +6,4 @@ export 'task.dart';
 export 'orbit_member.dart';
 export 'orbit_invitation.dart';
 export 'orbit_event.dart';
+export 'sphere_attachment.dart';
