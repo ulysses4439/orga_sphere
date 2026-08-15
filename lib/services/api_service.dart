@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:http/http.dart' as http;
 import 'package:http_parser/http_parser.dart' show MediaType;
 import '../models/models.dart';
@@ -283,6 +284,16 @@ class ApiService {
     _checkStatus(response);
     return SphereAttachment.fromJson(
         jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  /// Holt die Datei als Bytes – zum Speichern oder Weiterreichen.
+  static Future<Uint8List> downloadAttachment(String attachmentId) async {
+    final response = await http.get(
+      Uri.parse(attachmentContentUrl(attachmentId)),
+      headers: _headers,
+    );
+    _checkStatus(response);
+    return response.bodyBytes;
   }
 
   static Future<void> deleteAttachment(String attachmentId) async {

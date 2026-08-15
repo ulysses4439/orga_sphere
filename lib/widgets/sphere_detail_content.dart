@@ -9,6 +9,7 @@ import 'package:pasteboard/pasteboard.dart';
 import '../models/models.dart';
 import '../utils/attachment_upload.dart';
 import '../services/api_service.dart';
+import '../services/attachment_files.dart';
 import '../services/auth_service.dart';
 import '../services/notification_center.dart';
 import '../services/task_service.dart';
@@ -266,41 +267,34 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
       ));
       return;
     }
+    // Ein Bild schaut man an, eine Datei will man haben. Deshalb zwei
+    // verschiedene Hauptwege statt eines Zwischendialogs, den man erst
+    // wegklicken muss.
     if (attachment.isImage) {
-      await showAttachmentViewer(context, attachment);
+      await showAttachmentViewer(
+        context,
+        attachment,
+        onSave: () => _saveAttachment(attachment),
+      );
       return;
     }
-    // Andere Dateien lassen sich vorerst nur ansehen, nicht speichern oder
-    // öffnen – dafür braucht jede Plattform ihren eigenen Weg (Speichern-Dialog
-    // unter Windows, Download-Ordner bzw. Teilen auf Android). Kommt als
-    // eigener Schritt; bis dahin wenigstens die Angaben zur Datei statt eines
-    // Antippens, das nichts tut.
-    await showDialog<void>(
-      context: context,
-      builder: (ctx) => AlertDialog(
-        title: Text(attachment.fileName),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Größe: ${attachment.readableSize}'),
-            if (attachment.uploadedByName != null)
-              Text('Hochgeladen von: ${attachment.uploadedByName}'),
-            Text('Am: ${formatDate(attachment.createdAt)}'),
-            const SizedBox(height: 12),
-            const Text(
-              'Das Speichern und Öffnen von Dateien wird gerade eingebaut. '
-              'Bilder lassen sich bereits in voller Größe ansehen.',
-              style: TextStyle(fontSize: 12),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(ctx),
-            child: const Text('Schließen'),
-          ),
-        ],
+    await _saveAttachment(attachment);
+  }
+
+  /// Datei speichern (Rechner) bzw. weiterreichen (Handy).
+  Future<void> _saveAttachment(SphereAttachment attachment) async {
+    final ergebnis = await AttachmentFiles.herausgeben(attachment);
+    // null heißt: Dialog abgebrochen. Das ist keine Meldung wert.
+    if (ergebnis == null || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(ergebnis.meldung),
+        action: ergebnis.pfad == null
+            ? null
+            : SnackBarAction(
+                label: 'Ordner öffnen',
+                onPressed: () => AttachmentFiles.imOrdnerZeigen(ergebnis.pfad!),
+              ),
       ),
     );
   }

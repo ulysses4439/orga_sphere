@@ -133,7 +133,8 @@ class AttachmentTile extends StatelessWidget {
 
   Widget _buildFile(BuildContext context) {
     return Tooltip(
-      message: '${attachment.fileName}\n${attachment.readableSize}',
+      message: '${attachment.fileName}\n${attachment.readableSize}\n'
+          'Klicken zum Speichern',
       child: InkWell(
         onTap: onOpen,
         borderRadius: BorderRadius.circular(8),
@@ -261,8 +262,9 @@ class AttachmentTile extends StatelessWidget {
 /// Screenshot: um die kleine Schrift darauf lesen zu können.
 Future<void> showAttachmentViewer(
   BuildContext context,
-  SphereAttachment attachment,
-) {
+  SphereAttachment attachment, {
+  VoidCallback? onSave,
+}) {
   return showDialog<void>(
     context: context,
     barrierColor: Colors.black87,
@@ -293,6 +295,14 @@ Future<void> showAttachmentViewer(
                   ],
                 ),
               ),
+              // Auch ein Bild will man manchmal behalten – etwa um es an einen
+              // Fehlerbericht ausserhalb von OrgaSphere zu hängen.
+              if (onSave != null)
+                IconButton(
+                  icon: const Icon(Icons.download_outlined, color: Colors.white),
+                  tooltip: 'Speichern',
+                  onPressed: onSave,
+                ),
               IconButton(
                 icon: const Icon(Icons.close, color: Colors.white),
                 tooltip: 'Schließen',
