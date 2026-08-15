@@ -307,6 +307,8 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
 
       final datei = File('${ordner.path}${Platform.pathSeparator}$anhangId');
       await datei.writeAsBytes(bytes);
+      debugPrint('[Anhänge] zwischengelagert: ${datei.path} '
+          '(${bytes.length} Bytes, belegt jetzt ${belegt + bytes.length})');
 
       await Outbox().einreihen(OutboxCommand(
         id: commandId,
@@ -324,6 +326,10 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
       ));
       return datei.path;
     } catch (e) {
+      // Sichtbar UND im Protokoll: Beim Testen auf dem Handy erschien keine
+      // Kachel, und die Ursache liess sich nicht von aussen erkennen. Eine
+      // Meldung, die hinter der Tastatur verschwindet, hilft dabei nicht.
+      debugPrint('[Anhänge] Zwischenlagern fehlgeschlagen: $e');
       _zeigeHinweis('Anhang konnte nicht zwischengelagert werden: $e');
       return null;
     }

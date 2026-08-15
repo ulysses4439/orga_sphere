@@ -1,3 +1,4 @@
+import 'dart:async' show Timer;
 import 'dart:io' show File;
 
 import 'package:flutter/material.dart';
@@ -113,26 +114,7 @@ class AttachmentTile extends StatelessWidget {
             // kaputtes Bild – genau das war offline zu sehen.
             child: attachment.isLocalOnly
                 ? _buildLokalesBild()
-                : Image.network(
-              ApiService.attachmentContentUrl(attachment.id),
-              headers: ApiService.attachmentHeaders,
-              fit: BoxFit.cover,
-              loadingBuilder: (context, child, progress) {
-                if (progress == null) return child;
-                return const Center(
-                  child: SizedBox(
-                    width: 18,
-                    height: 18,
-                    child: CircularProgressIndicator(strokeWidth: 2),
-                  ),
-                );
-              },
-              // Ein kaputtes Vorschaubild darf den Verlauf nicht sprengen –
-              // lieber ein sichtbarer Platzhalter als eine rote Fehlerfläche.
-              errorBuilder: (context, error, stack) => const Center(
-                child: Icon(Icons.broken_image_outlined, color: Colors.grey),
-              ),
-            ),
+                : _NetzBild(attachmentId: attachment.id),
           ),
         ),
       ),
@@ -293,6 +275,110 @@ class AttachmentTile extends StatelessWidget {
       default:
         return Icons.insert_drive_file_outlined;
     }
+  }
+}
+
+/// Vorschaubild vom Server — mit Geduldsgrenze.
+///
+/// `Image.network` meldet ohne Verbindung nicht zuverlässig einen Fehler: Auf
+/// dem Handy im Flugmodus dreht das Ladezeichen unter Umständen endlos weiter,
+/// statt in den Fehlerzweig zu gehen. Ein Vorschaubild, das ewig lädt, ist
+/// schlechter als eines, das ehrlich sagt, dass es gerade nicht geht.
+///
+/// Nach [_geduld] wird deshalb abgebrochen und ein Platzhalter gezeigt, den man
+/// zum erneuten Versuch antippen kann.
+class _NetzBild extends StatefulWidget {
+  final String attachmentId;
+  const _NetzBild({required this.attachmentId});
+
+  static const _geduld = Duration(seconds: 8);
+
+  @override
+  State<_NetzBild> createState() => _NetzBildState();
+}
+
+class _NetzBildState extends State<_NetzBild> {
+  Timer? _uhr;
+  bool _aufgegeben = false;
+  int _versuch = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    _starteUhr();
+  }
+
+  void _starteUhr() {
+    _uhr?.cancel();
+    _uhr = Timer(_NetzBild._geduld, () {
+      if (mounted) setState(() => _aufgegeben = true);
+    });
+  }
+
+  @override
+  void dispose() {
+    _uhr?.cancel();
+    super.dispose();
+  }
+
+  void _nochmal() {
+    setState(() {
+      _aufgegeben = false;
+      _versuch++;
+    });
+    _starteUhr();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (_aufgegeben) {
+      return InkWell(
+        onTap: _nochmal,
+        child: const Center(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(Icons.cloud_off, color: Colors.grey, size: 20),
+              SizedBox(height: 2),
+              Text('Tippen', style: TextStyle(fontSize: 9, color: Colors.grey)),
+            ],
+          ),
+        ),
+      );
+    }
+
+    return Image.network(
+      ApiService.attachmentContentUrl(widget.attachmentId),
+      headers: ApiService.attachmentHeaders,
+      fit: BoxFit.cover,
+      // Erzwingt einen echten Neuversuch statt eines Treffers im Bildspeicher.
+      key: ValueKey(_versuch),
+      loadingBuilder: (context, child, progress) {
+        if (progress == null) {
+          // Fertig geladen – die Uhr braucht nicht weiterzulaufen.
+          _uhr?.cancel();
+          return child;
+        }
+        return const Center(
+          child: SizedBox(
+            width: 18,
+            height: 18,
+            child: CircularProgressIndicator(strokeWidth: 2),
+          ),
+        );
+      },
+      // Ein kaputtes Vorschaubild darf den Verlauf nicht sprengen – lieber ein
+      // sichtbarer Platzhalter als eine rote Fehlerfläche.
+      errorBuilder: (context, error, stack) {
+        _uhr?.cancel();
+        return InkWell(
+          onTap: _nochmal,
+          child: const Center(
+            child: Icon(Icons.broken_image_outlined, color: Colors.grey),
+          ),
+        );
+      },
+    );
   }
 }
 

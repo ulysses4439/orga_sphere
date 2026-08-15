@@ -159,6 +159,23 @@ function sniffImageType(buffer) {
   return null;
 }
 
+// Bricht einen Dateinamen auf das herunter, was in einer HTTP-Kopfzeile
+// erlaubt ist: reines ASCII ohne Anfuehrungszeichen und Steuerzeichen.
+//
+// Umlaute werden dabei uebersetzt statt geloescht - aus "Erklärung.pdf" wird
+// "Erklaerung.pdf" und nicht "Erklrung.pdf". Der echte Name bleibt in der
+// Datenbank und ist das, was der Nutzer zu sehen bekommt; dieser hier taucht
+// nur auf, wenn jemand die Datei unter Umgehung der App direkt abruft.
+function asciiDateiname(name) {
+  const ersetzt = String(name || 'datei')
+    .replace(/ä/g, 'ae').replace(/ö/g, 'oe').replace(/ü/g, 'ue')
+    .replace(/Ä/g, 'Ae').replace(/Ö/g, 'Oe').replace(/Ü/g, 'Ue')
+    .replace(/ß/g, 'ss');
+  // Alles, was danach noch ausserhalb des druckbaren ASCII liegt, faellt weg.
+  const sauber = ersetzt.replace(/[^\x20-\x7E]/g, '_').replace(/["\\]/g, '');
+  return sauber.trim().slice(0, 150) || 'datei';
+}
+
 // Endung fuer den Speichernamen - rein kosmetisch, damit man im Azure-Portal
 // erkennt, was man vor sich hat. Alles ausser Buchstaben und Ziffern fliegt
 // raus; der echte Dateiname wird NIE als Speichername verwendet.
@@ -2812,7 +2829,15 @@ app.post('/tasks/:taskId/attachments', requireAuth, upload.single('file'), async
         blobContentType: contentType,
         // Auch wenn jemand direkt an die Datei kaeme: nichts im Browser
         // ausfuehren oder darstellen lassen.
-        blobContentDisposition: `attachment; filename="${fileName.replace(/"/g, '')}"`,
+        //
+        // Der Name MUSS hier auf ASCII heruntergebrochen werden. Kopfzeilen
+        // vertragen nichts anderes, und Azure lehnt den Upload sonst mit
+        // "The metadata specified is invalid. It has characters that are not
+        // permitted." ab - ein einziger Umlaut im Dateinamen genuegte, um das
+        // Anhaengen unmoeglich zu machen. Der echte Name geht dabei nicht
+        // verloren: Er steht in TaskAttachment.fileName und wird beim
+        // Ausliefern von dort gesetzt.
+        blobContentDisposition: `attachment; filename="${asciiDateiname(fileName)}"`,
       },
     });
 
