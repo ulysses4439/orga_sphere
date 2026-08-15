@@ -257,7 +257,7 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
         typ: typ,
         geschehenAm: geschehenAm,
       );
-      if (ok && mounted) {
+      if (ok != null && mounted) {
         setState(() => _pendingUploads = [
               ..._pendingUploads,
               SphereAttachment(
@@ -268,10 +268,13 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                 sizeBytes: bytes.length,
                 isImage: istBildDateiname(name),
                 createdAt: geschehenAm,
+                // Zeigt der Kachel, dass sie ihr Bild von der Platte holen
+                // soll statt vom Server.
+                localPath: ok,
               ),
             ]);
       }
-      return ok;
+      return ok != null;
     } catch (e) {
       _zeigeHinweis('Hochladen fehlgeschlagen: $e');
       return false;
@@ -279,7 +282,8 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
   }
 
   /// Legt die Datei im Zwischenlager ab und reiht den Upload ein.
-  Future<bool> _anhangZwischenlagern({
+  /// Gibt den Pfad im Zwischenlager zurueck, oder `null` bei Misserfolg.
+  Future<String?> _anhangZwischenlagern({
     required String anhangId,
     required String commandId,
     required Uint8List bytes,
@@ -298,7 +302,7 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
       if (belegt + bytes.length > kMaxStagedBytes) {
         _zeigeHinweis('Zu viele Anhänge warten schon auf die Übertragung. '
             'Dieser braucht eine Verbindung.');
-        return false;
+        return null;
       }
 
       final datei = File('${ordner.path}${Platform.pathSeparator}$anhangId');
@@ -318,10 +322,10 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
           'contentType': typ,
         },
       ));
-      return true;
+      return datei.path;
     } catch (e) {
       _zeigeHinweis('Anhang konnte nicht zwischengelagert werden: $e');
-      return false;
+      return null;
     }
   }
 

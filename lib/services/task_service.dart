@@ -511,18 +511,64 @@ class TaskService extends ChangeNotifier {
 
   Future<void> addLogEntry(String taskId, String text,
       {List<String> attachmentIds = const []}) async {
-    final result =
-        await ApiService.addLogEntry(taskId, text, attachmentIds: attachmentIds);
     final task = getTaskById(taskId);
-    task?.addLogEntry(result.entry);
-    if (result.newTaskStatus != null) {
-      final newStatus = TaskStatus.values.firstWhere(
-        (s) => s.name == result.newTaskStatus,
-        orElse: () => task?.status ?? TaskStatus.open,
-      );
-      task?.status = newStatus;
+    if (task == null) return;
+
+    // Kennung vom Geraet, damit der Eintrag auch offline seine endgueltige
+    // Identitaet hat - und die Anhaenge sich darauf beziehen koennen.
+    final eintragId = Outbox.neueKennung();
+    final commandId = Outbox.neueKennung();
+    final geschehenAm = DateTime.now();
+
+    // Lokal sofort zeigen. Der Verlauf ist der Ort, an dem man am ehesten
+    // merkt, ob etwas angekommen ist - er darf nicht leer bleiben, nur weil
+    // gerade kein Netz da ist.
+    final lokal = TaskLogEntry(
+      id: eintragId,
+      user: AuthService.displayName ?? AuthService.email ?? 'Ich',
+      timestamp: geschehenAm,
+      text: text,
+    );
+    task.addLogEntry(lokal);
+    final vorherigerStatus = task.status;
+    if (task.status == TaskStatus.open) task.status = TaskStatus.inProgress;
+    notifyListeners();
+
+    try {
+      final result = await ApiService.addLogEntry(taskId, text,
+          attachmentIds: attachmentIds,
+          entryId: eintragId,
+          commandId: commandId,
+          occurredAt: geschehenAm);
+      if (result.newTaskStatus != null) {
+        task.status = TaskStatus.values.firstWhere(
+          (s) => s.name == result.newTaskStatus,
+          orElse: () => task.status,
+        );
+      }
+      _touch();
+    } on OfflineException {
+      await Outbox().einreihen(OutboxCommand(
+        id: commandId,
+        kind: 'log_create',
+        method: 'POST',
+        path: '/logs',
+        occurredAt: geschehenAm,
+        body: {
+          'id': eintragId,
+          'taskId': taskId,
+          'text': text,
+          'attachmentIds': attachmentIds,
+        },
+      ));
+      _touch();
+    } catch (e) {
+      task.logEntries.removeWhere((l) => l.id == eintragId);
+      task.logCount = task.logEntries.length;
+      task.status = vorherigerStatus;
+      notifyListeners();
+      rethrow;
     }
-    _touch();
   }
 
   Future<void> updateTaskTitle(String taskId, String title) async {

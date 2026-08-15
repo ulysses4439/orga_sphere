@@ -608,8 +608,13 @@ class ApiService {
 
   static Future<({TaskLogEntry entry, String? newTaskStatus})> addLogEntry(
       String taskId, String text,
-      {List<String> attachmentIds = const []}) async {
-    final response = await _post('/logs', {
+      {List<String> attachmentIds = const [],
+      String? entryId,
+      String? commandId,
+      DateTime? occurredAt}) async {
+    final response = await _postMitKennung('/logs', commandId, {
+      'id': ?entryId,
+      'occurredAt': ?occurredAt?.toIso8601String(),
       'taskId': taskId,
       'text': text,
       // Bereits hochgeladene Anhänge, die dieser Eintrag übernehmen soll. Der

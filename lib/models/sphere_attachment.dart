@@ -38,6 +38,7 @@ class SphereAttachment {
     this.uploadedBy,
     this.uploadedByName,
     this.blobDeletedAt,
+    this.localPath,
   });
 
   /// Die Datei ist abgelaufen und nicht mehr abrufbar.
@@ -45,6 +46,16 @@ class SphereAttachment {
 
   /// Noch keinem Verlaufseintrag zugeordnet – hängt am offenen Formular.
   bool get isPending => logEntryId == null;
+
+  /// Pfad im Zwischenlager, solange die Datei noch nicht hochgeladen ist.
+  ///
+  /// Nur bei Anhängen gesetzt, die ohne Verbindung gewählt wurden. Die Kachel
+  /// zeigt dann das Bild von der Platte – ein Abruf beim Server würde ohne Netz
+  /// nur ein kaputtes Vorschaubild ergeben.
+  final String? localPath;
+
+  /// Wartet die Datei noch auf ihre Übertragung?
+  bool get isLocalOnly => localPath != null;
 
   /// Größe in einer Form, die man vorlesen kann.
   String get readableSize {

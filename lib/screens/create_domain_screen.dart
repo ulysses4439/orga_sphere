@@ -186,6 +186,11 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
                     controlAffinity: ListTileControlAffinity.leading,
                     contentPadding: EdgeInsets.zero,
                   ),
+                  // Eine einfache Liste kennt keine Wiederholungen, das Feld
+                  // waere dort ohne Wirkung – ihre Positionen verschwinden
+                  // ohnehin 24 Stunden nach dem Abhaken. Deshalb blendet es
+                  // sich aus, sobald der Haken oben gesetzt ist.
+                  if (!_isShoppingList) ...[
                   const SizedBox(height: 16),
                   // Aufbewahrung: Anzahl statt Frist, weil eine Frist die
                   // Wiederholungsrhythmen ungleich trifft. Der Text erklaert
@@ -222,6 +227,7 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
                         .bodySmall
                         ?.copyWith(color: Colors.grey[600]),
                   ),
+                  ],
                   const SizedBox(height: 24),
                   FilledButton(
                     onPressed: _save,

@@ -671,6 +671,7 @@ class _TaskListScreenState extends State<TaskListScreen>
         initialName: domain.name,
         initialDescription: domain.description,
         initialKeepLandedCount: domain.keepLandedCount,
+        isShoppingList: domain.isShoppingList,
       ),
     );
     if (result == null || !mounted) return;
@@ -1536,10 +1537,15 @@ class _OrbitEditDialog extends StatefulWidget {
   final String initialDescription;
   final int initialKeepLandedCount;
 
+  /// Einfache Listen kennen keine Wiederholungen – dort entfaellt das
+  /// Aufbewahrungsfeld.
+  final bool isShoppingList;
+
   const _OrbitEditDialog({
     required this.initialName,
     required this.initialDescription,
     required this.initialKeepLandedCount,
+    required this.isShoppingList,
   });
 
   @override
@@ -1590,55 +1596,65 @@ class _OrbitEditDialogState extends State<_OrbitEditDialog> {
   Widget build(BuildContext context) {
     return AlertDialog(
       title: const Text('Orbit bearbeiten'),
-      content: Column(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          TextField(
-            controller: _nameCtrl,
-            autofocus: true,
-            textCapitalization: TextCapitalization.sentences,
-            maxLength: kOrbitNameMaxLength,
-            buildCounter: nearLimitCounter,
-            decoration: const InputDecoration(labelText: 'Name'),
-            onSubmitted: (_) => _submit(),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _descCtrl,
-            textCapitalization: TextCapitalization.sentences,
-            maxLines: 3,
-            maxLength: kOrbitDescriptionMaxLength,
-            buildCounter: nearLimitCounter,
-            decoration: const InputDecoration(
-              labelText: 'Beschreibung',
-              alignLabelWithHint: true,
-              border: OutlineInputBorder(),
+      // Scrollbar, weil die Tastatur den sichtbaren Bereich halbiert: Ohne das
+      // schoben sich Inhalt und Knopfleiste auf dem Handy uebereinander, und
+      // das Zahlenfeld lag unter „Abbrechen/Speichern".
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            TextField(
+              controller: _nameCtrl,
+              autofocus: true,
+              textCapitalization: TextCapitalization.sentences,
+              maxLength: kOrbitNameMaxLength,
+              buildCounter: nearLimitCounter,
+              decoration: const InputDecoration(labelText: 'Name'),
+              onSubmitted: (_) => _submit(),
             ),
-          ),
-          const SizedBox(height: 12),
-          TextField(
-            controller: _keepCtrl,
-            keyboardType: TextInputType.number,
-            decoration: InputDecoration(
-              labelText: 'Erledigte Spheres aufheben',
-              suffixText: 'je Wiederholung',
-              errorText: _keepFehler,
-              border: const OutlineInputBorder(),
+            const SizedBox(height: 12),
+            TextField(
+              controller: _descCtrl,
+              textCapitalization: TextCapitalization.sentences,
+              maxLines: 3,
+              maxLength: kOrbitDescriptionMaxLength,
+              buildCounter: nearLimitCounter,
+              decoration: const InputDecoration(
+                labelText: 'Beschreibung',
+                alignLabelWithHint: true,
+                border: OutlineInputBorder(),
+              ),
             ),
-            onChanged: (_) {
-              if (_keepFehler != null) setState(() => _keepFehler = null);
-            },
-          ),
-          const SizedBox(height: 6),
-          Text(
-            'Ältere erledigte Ausgaben einer Wiederholung werden gelöscht. '
-            'Einmalige Spheres verschwinden ein Jahr nach dem Erledigen.',
-            style: Theme.of(context)
-                .textTheme
-                .bodySmall
-                ?.copyWith(color: Colors.grey[600]),
-          ),
-        ],
+            // In einer einfachen Liste gibt es keine Wiederholungen – dort
+            // waere das Feld ohne Wirkung. Ihre Positionen verschwinden
+            // ohnehin 24 Stunden nach dem Abhaken.
+            if (!widget.isShoppingList) ...[
+              const SizedBox(height: 12),
+              TextField(
+                controller: _keepCtrl,
+                keyboardType: TextInputType.number,
+                decoration: InputDecoration(
+                  labelText: 'Erledigte Spheres aufheben',
+                  suffixText: 'je Wiederholung',
+                  errorText: _keepFehler,
+                  border: const OutlineInputBorder(),
+                ),
+                onChanged: (_) {
+                  if (_keepFehler != null) setState(() => _keepFehler = null);
+                },
+              ),
+              const SizedBox(height: 6),
+              Text(
+                'Ältere erledigte Ausgaben einer Wiederholung werden gelöscht. '
+                'Einmalige Spheres verschwinden ein Jahr nach dem Erledigen.',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: Colors.grey[600]),
+              ),
+            ],
+          ],
+        ),
       ),
       actions: [
         TextButton(

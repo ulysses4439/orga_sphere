@@ -1,3 +1,5 @@
+import 'dart:io' show File;
+
 import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/api_service.dart';
@@ -95,7 +97,8 @@ class AttachmentTile extends StatelessWidget {
 
   Widget _buildImage(BuildContext context) {
     return Tooltip(
-      message: '${attachment.fileName}\n${attachment.readableSize}',
+      message: '${attachment.fileName}\n${attachment.readableSize}'
+          '${attachment.isLocalOnly ? '\nwartet auf die Übertragung' : ''}',
       child: InkWell(
         onTap: onOpen,
         borderRadius: BorderRadius.circular(8),
@@ -105,7 +108,12 @@ class AttachmentTile extends StatelessWidget {
             width: _thumbSize,
             height: _thumbSize,
             color: AppColors.lightGrey,
-            child: Image.network(
+            // Wartet die Datei noch im Zwischenlager, kommt das Vorschaubild
+            // von der Platte. Ein Abruf beim Server ergaebe ohne Netz nur ein
+            // kaputtes Bild – genau das war offline zu sehen.
+            child: attachment.isLocalOnly
+                ? _buildLokalesBild()
+                : Image.network(
               ApiService.attachmentContentUrl(attachment.id),
               headers: ApiService.attachmentHeaders,
               fit: BoxFit.cover,
@@ -128,6 +136,36 @@ class AttachmentTile extends StatelessWidget {
           ),
         ),
       ),
+    );
+  }
+
+  /// Vorschau aus dem Zwischenlager, mit einer kleinen Wolke als Hinweis, dass
+  /// die Datei noch nicht beim Server ist.
+  Widget _buildLokalesBild() {
+    return Stack(
+      fit: StackFit.expand,
+      children: [
+        Image.file(
+          File(attachment.localPath!),
+          fit: BoxFit.cover,
+          errorBuilder: (context, error, stack) => const Center(
+            child: Icon(Icons.image_outlined, color: Colors.grey),
+          ),
+        ),
+        Positioned(
+          right: 2,
+          bottom: 2,
+          child: Container(
+            padding: const EdgeInsets.all(2),
+            decoration: BoxDecoration(
+              color: Colors.black54,
+              borderRadius: BorderRadius.circular(4),
+            ),
+            child: const Icon(Icons.cloud_upload_outlined,
+                size: 11, color: Colors.white),
+          ),
+        ),
+      ],
     );
   }
 
