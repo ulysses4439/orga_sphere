@@ -223,6 +223,146 @@ async function purgeAttachmentsForTask(p, taskId) {
 }
 
 // -----------------------------------------------------------------------
+// Auftraege aus der Offline-Warteschlange
+//
+// Ein Geraet weiss nach einem Verbindungsabbruch nicht, ob sein Auftrag
+// angekommen ist. Sendet es erneut, entstuenden sonst doppelte
+// Verlaufseintraege oder doppelte Anhaenge. Jeder Auftrag traegt deshalb eine
+// vom Geraet vergebene Kennung im Kopf `X-Command-Id`; der Server merkt sich
+// die erledigten und antwortet beim zweiten Mal mit dem Ergebnis des ersten
+// Durchlaufs, ohne etwas zu tun.
+//
+// Ohne Kopfzeile verhaelt sich alles wie bisher - Online-Aufrufe brauchen den
+// Schutz nicht und sollen ihn nicht bezahlen.
+// -----------------------------------------------------------------------
+
+// Frueheres Ergebnis zu dieser Auftragskennung, oder null.
+//
+// Die Pruefung auf den Nutzer ist Absicht: Eine erratene fremde Kennung soll
+// niemandem die Antwort eines anderen ausliefern.
+async function findHandledCommand(p, commandId, userId) {
+  if (!commandId) return null;
+  const result = await p.request()
+    .input('id',     sql.NVarChar, commandId)
+    .input('userId', sql.NVarChar, userId)
+    .query('SELECT response FROM SyncCommand WHERE id = @id AND userId = @userId');
+  const row = result.recordset[0];
+  if (!row) return null;
+  try {
+    return row.response ? JSON.parse(row.response) : {};
+  } catch {
+    return {};
+  }
+}
+
+async function rememberCommand(p, commandId, userId, kind, response) {
+  if (!commandId) return;
+  try {
+    await p.request()
+      .input('id',       sql.NVarChar, commandId)
+      .input('userId',   sql.NVarChar, userId)
+      .input('kind',     sql.NVarChar, (kind || 'unbekannt').slice(0, 50))
+      .input('response', sql.NVarChar, JSON.stringify(response ?? {}))
+      .query(`IF NOT EXISTS (SELECT 1 FROM SyncCommand WHERE id = @id)
+              INSERT INTO SyncCommand (id, userId, kind, response)
+              VALUES (@id, @userId, @kind, @response)`);
+  } catch (err) {
+    // Der Auftrag ist ausgefuehrt - das Protokollieren darf ihn nicht
+    // nachtraeglich scheitern lassen. Schlimmstenfalls wirkt eine Wiederholung
+    // ein zweites Mal, was bei den meisten Aufrufen ohnehin folgenlos ist.
+    console.error('SyncCommand nicht protokolliert:', err.message);
+  }
+}
+
+// Wann ein Auftrag beim Geraet entstanden ist. Ohne Angabe: jetzt.
+//
+// Begrenzt, weil Geraeteuhren falsch gehen: nie in der Zukunft (sonst gewinnt
+// ein falsch gestelltes Handy jeden Konflikt auf Dauer), nie aelter als 30
+// Tage (so lange versucht es keine Warteschlange).
+function occurredAtFromRequest(req, now = new Date()) {
+  const roh = req.body?.occurredAt;
+  if (!roh) return now;
+  const zeit = new Date(roh);
+  if (Number.isNaN(zeit.getTime())) return now;
+  const frueheste = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  if (zeit > now) return now;
+  if (zeit < frueheste) return frueheste;
+  return zeit;
+}
+
+function commandIdFromRequest(req) {
+  const wert = req.headers['x-command-id'];
+  return typeof wert === 'string' && wert.length > 0 ? wert.slice(0, 100) : null;
+}
+
+// Gemeinsamer Kopf aller Sphere-Aenderungen. Prueft der Reihe nach:
+//
+//   1. Wurde dieser Auftrag schon ausgefuehrt?     -> alte Antwort ausliefern
+//   2. Gibt es die Sphere noch?                    -> aus der Warteschlange kein Fehler
+//   3. Darf der Aufrufer sie aendern?
+//   4. Ist der Auftrag noch der juengste?          -> sonst verworfen
+//
+// Rueckgabe `null` heisst: Es wurde bereits geantwortet, der Aufrufer ist
+// fertig. Sonst kommt der Zusammenhang zurueck, mit dem er weiterarbeitet.
+//
+// Zu Punkt 4: Verglichen wird, WANN etwas geschah, nicht wann es ankam. Aendert
+// jemand um 11 Uhr online und ein anderer um 10 Uhr offline, gewinnt der Erste
+// - auch wenn die Offline-Aenderung erst um 12 Uhr eintrifft. Fuer
+// Online-Aufrufe ohne Zeitangabe gilt "jetzt", die gewinnen also immer; am
+// bisherigen Verhalten aendert sich dadurch nichts.
+async function beginTaskCommand(req, res, kind, { pruefeAlter = true } = {}) {
+  const commandId = commandIdFromRequest(req);
+  const p = await getPool();
+
+  const frueher = await findHandledCommand(p, commandId, req.user.userId);
+  if (frueher) { res.json(frueher); return null; }
+
+  const taskResult = await p.request()
+    .input('id', sql.NVarChar, req.params.id)
+    .query('SELECT id, domainId, title, updatedAt FROM Task WHERE id = @id');
+  const task = taskResult.recordset[0];
+
+  if (!task) {
+    // Aus der Warteschlange heisst das: inzwischen von jemand anderem
+    // geloescht. Kein Fehler - es gibt nur nichts mehr zu tun.
+    if (commandId) {
+      const antwort = { success: true, gone: true };
+      await rememberCommand(p, commandId, req.user.userId, kind, antwort);
+      res.json(antwort);
+      return null;
+    }
+    res.status(404).json({ error: 'Task not found' });
+    return null;
+  }
+
+  const access = await p.request()
+    .input('orbitId', sql.NVarChar, task.domainId)
+    .input('userId',  sql.NVarChar, req.user.userId)
+    .query(`SELECT id FROM OrbitMember
+            WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
+  if (access.recordset.length === 0) {
+    res.status(403).json({ error: 'Kein Zugriff' });
+    return null;
+  }
+
+  const geschehenAm = occurredAtFromRequest(req);
+  if (pruefeAlter && task.updatedAt && geschehenAm < task.updatedAt) {
+    const antwort = { success: true, superseded: true };
+    await rememberCommand(p, commandId, req.user.userId, kind, antwort);
+    res.json(antwort);
+    return null;
+  }
+
+  return { p, task, commandId, geschehenAm, kind };
+}
+
+// Gegenstueck zu beginTaskCommand: Ergebnis protokollieren und ausliefern.
+async function finishTaskCommand(ctx, req, res, antwort = { success: true }) {
+  await rememberCommand(ctx.p, ctx.commandId, req.user.userId, ctx.kind, antwort);
+  res.json(antwort);
+}
+
+// -----------------------------------------------------------------------
 // E-Mail
 // -----------------------------------------------------------------------
 
@@ -591,6 +731,33 @@ function nextReminderDate(current, frequency, interval, timeZone = APP_TIMEZONE)
   return zonedPartsToUtc(parts, timeZone);
 }
 
+// Kennung einer Folge-Sphere - BERECHENBAR statt zufaellig.
+//
+// Der Grund liegt im Offline-Betrieb: Ist ein Geraet zwei Tage ohne Netz und
+// hakt taeglich ab, muss es die jeweils naechste Sphere selbst anlegen. Der
+// Server tut in derselben Zeit dasselbe (der Scheduler legt faellige
+// Folge-Spheres von sich aus an). Mit Zufallskennungen entstuenden zwei Zeilen
+// fuer denselben Termin - jede Einnahme doppelt.
+//
+// Aus Serie und Termin berechnet, kommen beide Seiten unabhaengig voneinander
+// auf dieselbe Kennung. Wer zuerst anlegt, gewinnt; der zweite Versuch laeuft
+// ins Leere, weil die Kennung schon vergeben ist. Und ein "erledigt"-Auftrag
+// aus der Warteschlange trifft die richtige Zeile, egal wer sie angelegt hat.
+//
+// Der Termin reicht als Unterscheidung, weil die groebste Wiederholung
+// taeglich ist - zwei Ausgaben derselben Serie fallen nie auf denselben Tag.
+//
+// Nur das START-Datum geht ein, und das ist reine Kalenderarithmetik. Die
+// heikle Zonenrechnung betrifft ausschliesslich die Erinnerungsuhrzeit und
+// bleibt damit ohne Einfluss auf die Identitaet.
+function seriesOccurrenceId(seriesId, startDate) {
+  const d = new Date(startDate);
+  const tag = `${d.getUTCFullYear()}-`
+    + `${String(d.getUTCMonth() + 1).padStart(2, '0')}-`
+    + `${String(d.getUTCDate()).padStart(2, '0')}`;
+  return `${seriesId}:${tag}`;
+}
+
 async function createNextCapsuleIfNeeded(p, task) {
   if (task.recurrenceFrequency === 'none') return null;
 
@@ -617,7 +784,17 @@ async function createNextCapsuleIfNeeded(p, task) {
   // angesehen und nie eine Mail geschickt.
   const nextReminder = nextReminderDate(task.reminderAt, task.recurrenceFrequency, task.recurrenceInterval);
 
-  const nextId    = uuidv4();
+  const seriesId = task.seriesId || task.id;
+  const nextId   = seriesOccurrenceId(seriesId, nextStart);
+
+  // Zweite Absicherung neben der Pruefung ueber previousTaskId: Legt das
+  // Geraet aus seiner Warteschlange dieselbe Ausgabe an, waehrend der
+  // Scheduler es ebenfalls tut, faellt der spaetere Versuch hier still durch
+  // statt am Primaerschluessel zu scheitern.
+  const schonDa = await p.request()
+    .input('id', sql.NVarChar, nextId)
+    .query('SELECT id FROM Task WHERE id = @id');
+  if (schonDa.recordset.length > 0) return null;
 
   const result = await p.request()
     .input('id',                   sql.NVarChar,  nextId)
@@ -634,7 +811,7 @@ async function createNextCapsuleIfNeeded(p, task) {
     // Serien-Kennung von der Vorgaengerin uebernehmen. Faellt sie leer aus
     // (Sphere von vor der Migration), tritt deren id an ihre Stelle - dann
     // beginnt die Serie eben dort.
-    .input('seriesId',             sql.NVarChar,  task.seriesId || task.id)
+    .input('seriesId',             sql.NVarChar,  seriesId)
     .query(`INSERT INTO Task
               (id, domainId, title, description, startDate, dueDate, reminderAt,
                recurrenceFrequency, recurrenceInterval, status, previousTaskId, assignedToMemberId,
@@ -1971,9 +2148,32 @@ app.post('/tasks', requireAuth, async (req, res) => {
   const { domainId, title, description, startDate, dueDate, recurrenceFrequency, recurrenceInterval } = req.body;
   if (rejectIfTooLong(res, 'Der Titel', title, FIELD_LIMITS.sphereTitle)) return;
   if (rejectIfTooLong(res, 'Die Beschreibung', description, FIELD_LIMITS.sphereDescription)) return;
-  const id = uuidv4();
+
+  // Das GERAET darf die Kennung mitbringen. Ohne das muesste eine offline
+  // angelegte Sphere zunaechst mit einer Ersatzkennung leben und beim Abgleich
+  // umgehaengt werden - samt allem, was inzwischen daran haengt
+  // (Verlaufseintraege, Anhaenge, Zuweisungen). Bringt das Geraet die endgueltige
+  // Kennung von Anfang an mit, entfaellt diese ganze Klasse von Problemen.
+  const mitgebracht = typeof req.body.id === 'string' ? req.body.id.trim() : '';
+  const id = mitgebracht.length > 0 && mitgebracht.length <= 100 ? mitgebracht : uuidv4();
+  const commandId = commandIdFromRequest(req);
+
   try {
     const p = await getPool();
+
+    const frueher = await findHandledCommand(p, commandId, req.user.userId);
+    if (frueher) return res.json(frueher);
+
+    // Kennung schon vergeben? Dann hat ein frueherer Versuch desselben
+    // Auftrags durchgezogen, und die Antwort wurde nur nie zugestellt.
+    const schonDa = await p.request()
+      .input('id', sql.NVarChar, id)
+      .query('SELECT * FROM Task WHERE id = @id');
+    if (schonDa.recordset.length > 0) {
+      const antwort = schonDa.recordset[0];
+      await rememberCommand(p, commandId, req.user.userId, 'task_create', antwort);
+      return res.json(antwort);
+    }
 
     // Zugriffsprüfung: User muss Mitglied des Orbits sein
     const access = await p.request()
@@ -2002,7 +2202,9 @@ app.post('/tasks', requireAuth, async (req, res) => {
               OUTPUT INSERTED.*
               VALUES (@id, @domainId, @title, @description, @startDate, @dueDate,
                       @recurrenceFrequency, @recurrenceInterval, 'open', @seriesId)`);
-    res.json(result.recordset[0]);
+    const angelegt = result.recordset[0];
+    await rememberCommand(p, commandId, req.user.userId, 'task_create', angelegt);
+    res.json(angelegt);
 
     // Team-Benachrichtigung (nach der Antwort – darf die Erstellung nicht blockieren)
     const orbitRow = await p.request()
@@ -2022,12 +2224,29 @@ app.post('/tasks', requireAuth, async (req, res) => {
 
 app.patch('/tasks/:id/done', requireAuth, async (req, res) => {
   const { id } = req.params;
+  const commandId = commandIdFromRequest(req);
   try {
     const p = await getPool();
+
+    // Schon einmal ausgefuehrt? Dann die damalige Antwort erneut ausliefern.
+    const frueher = await findHandledCommand(p, commandId, req.user.userId);
+    if (frueher) return res.json(frueher);
+
     const taskResult = await p.request()
       .input('id', sql.NVarChar, id)
       .query('SELECT * FROM Task WHERE id = @id');
-    if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
+    if (taskResult.recordset.length === 0) {
+      // Aus der Warteschlange heisst das: Die Sphere wurde inzwischen von
+      // jemand anderem geloescht. Kein Fehler, es gibt nur nichts mehr zu tun -
+      // eine Fehlermeldung Tage spaeter ueber etwas laengst Vergessenes hilft
+      // niemandem. Der Auftrag gilt als erledigt und wird nicht wiederholt.
+      if (commandId) {
+        const antwort = { success: true, nextTask: null, gone: true };
+        await rememberCommand(p, commandId, req.user.userId, 'task_done', antwort);
+        return res.json(antwort);
+      }
+      return res.status(404).json({ error: 'Task not found' });
+    }
     const task = taskResult.recordset[0];
 
     // Zugriffsprüfung
@@ -2047,20 +2266,34 @@ app.patch('/tasks/:id/done', requireAuth, async (req, res) => {
     // doppelten Antippen wurden zwei Wiederholungen. Jetzt gewinnt die erste
     // Anfrage das Rennen, die zweite aendert keine Zeile und steigt hier aus.
     const now = new Date();
+    // Erledigt wurde, WANN es geschah - nicht, wann es hier ankam. Sonst
+    // stuende im Verlauf der Dienstagabend, an dem der Abgleich lief, statt des
+    // Samstagvormittags im Laden. completedSeenAt haelt den Eingang fest; die
+    // 24-Stunden-Frist der Einkaufslisten rechnet ab dem spaeteren der beiden,
+    // damit eine verspaetet gemeldete Position nicht sofort verschwindet.
+    const geschehenAm = occurredAtFromRequest(req, now);
     const updated = await p.request()
-      .input('id',          sql.NVarChar,  id)
-      .input('completedAt', sql.DateTime2, now)
-      .query("UPDATE Task SET status = 'done', completedAt = @completedAt WHERE id = @id AND status <> 'done'");
+      .input('id',              sql.NVarChar,  id)
+      .input('completedAt',     sql.DateTime2, geschehenAm)
+      .input('completedSeenAt', sql.DateTime2, now)
+      .query(`UPDATE Task
+              SET status = 'done', completedAt = @completedAt,
+                  completedSeenAt = @completedSeenAt, updatedAt = @completedSeenAt
+              WHERE id = @id AND status <> 'done'`);
 
     if (updated.rowsAffected[0] === 0) {
       // War bereits erledigt. Bewusst ein Erfolg und kein Fehler: Fuer die App
       // ist der gewuenschte Zustand erreicht. Keine Folge-Sphere und keine
       // zweite Team-Meldung.
-      return res.json({ success: true, nextTask: null });
+      const antwort = { success: true, nextTask: null };
+      await rememberCommand(p, commandId, req.user.userId, 'task_done', antwort);
+      return res.json(antwort);
     }
 
     const nextTask = await createNextCapsuleIfNeeded(p, task);
-    res.json({ success: true, nextTask: nextTask || null });
+    const antwort = { success: true, nextTask: nextTask || null };
+    await rememberCommand(p, commandId, req.user.userId, 'task_done', antwort);
+    res.json(antwort);
 
     const orbitRow = await p.request()
       .input('id', sql.NVarChar, task.domainId)
@@ -2100,129 +2333,103 @@ app.patch('/tasks/:id/start', requireAuth, async (req, res) => {
 });
 
 app.patch('/tasks/:id/reopen', requireAuth, async (req, res) => {
-  const { id } = req.params;
   try {
-    const p = await getPool();
-    const taskResult = await p.request().input('id', sql.NVarChar, id).query('SELECT domainId FROM Task WHERE id = @id');
-    if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
-    const access = await p.request()
-      .input('orbitId', sql.NVarChar, taskResult.recordset[0].domainId)
-      .input('userId',  sql.NVarChar, req.user.userId)
-      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
-    if (access.recordset.length === 0) return res.status(403).json({ error: 'Kein Zugriff' });
+    const ctx = await beginTaskCommand(req, res, 'task_reopen');
+    if (!ctx) return;
 
-    await p.request()
-      .input('id', sql.NVarChar, id)
-      .query("UPDATE Task SET status = 'open', completedAt = NULL WHERE id = @id");
-    res.json({ success: true });
+    await ctx.p.request()
+      .input('id',        sql.NVarChar,  ctx.task.id)
+      .input('updatedAt', sql.DateTime2, ctx.geschehenAm)
+      .query(`UPDATE Task
+              SET status = 'open', completedAt = NULL, completedSeenAt = NULL,
+                  updatedAt = @updatedAt
+              WHERE id = @id`);
+    await finishTaskCommand(ctx, req, res);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 app.patch('/tasks/:id/title', requireAuth, async (req, res) => {
-  const { id } = req.params;
   const { title } = req.body;
   if (!title || !title.trim()) return res.status(400).json({ error: 'Titel darf nicht leer sein' });
   if (rejectIfTooLong(res, 'Der Titel', title, FIELD_LIMITS.sphereTitle)) return;
   try {
-    const p = await getPool();
-    const taskResult = await p.request().input('id', sql.NVarChar, id).query('SELECT domainId FROM Task WHERE id = @id');
-    if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
-    const access = await p.request()
-      .input('orbitId', sql.NVarChar, taskResult.recordset[0].domainId)
-      .input('userId',  sql.NVarChar, req.user.userId)
-      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
-    if (access.recordset.length === 0) return res.status(403).json({ error: 'Kein Zugriff' });
+    const ctx = await beginTaskCommand(req, res, 'task_title');
+    if (!ctx) return;
 
-    const result = await p.request()
-      .input('id',    sql.NVarChar, id)
-      .input('title', sql.NVarChar, title.trim())
-      .query('UPDATE Task SET title = @title WHERE id = @id');
-    if (result.rowsAffected[0] === 0) return res.status(404).json({ error: 'Task not found' });
-    res.json({ success: true });
+    await ctx.p.request()
+      .input('id',        sql.NVarChar,  ctx.task.id)
+      .input('title',     sql.NVarChar,  title.trim())
+      .input('updatedAt', sql.DateTime2, ctx.geschehenAm)
+      .query('UPDATE Task SET title = @title, updatedAt = @updatedAt WHERE id = @id');
+    await finishTaskCommand(ctx, req, res);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 app.patch('/tasks/:id/description', requireAuth, async (req, res) => {
-  const { id } = req.params;
   const { description } = req.body;
   if (rejectIfTooLong(res, 'Die Beschreibung', description, FIELD_LIMITS.sphereDescription)) return;
   try {
-    const p = await getPool();
-    const taskResult = await p.request().input('id', sql.NVarChar, id).query('SELECT domainId FROM Task WHERE id = @id');
-    if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
-    const access = await p.request()
-      .input('orbitId', sql.NVarChar, taskResult.recordset[0].domainId)
-      .input('userId',  sql.NVarChar, req.user.userId)
-      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
-    if (access.recordset.length === 0) return res.status(403).json({ error: 'Kein Zugriff' });
+    const ctx = await beginTaskCommand(req, res, 'task_description');
+    if (!ctx) return;
 
-    const result = await p.request()
-      .input('id',          sql.NVarChar, id)
-      .input('description', sql.NVarChar, description ?? '')
-      .query('UPDATE Task SET description = @description WHERE id = @id');
-    if (result.rowsAffected[0] === 0) return res.status(404).json({ error: 'Task not found' });
-    res.json({ success: true });
+    await ctx.p.request()
+      .input('id',          sql.NVarChar,  ctx.task.id)
+      .input('description', sql.NVarChar,  description ?? '')
+      .input('updatedAt',   sql.DateTime2, ctx.geschehenAm)
+      .query('UPDATE Task SET description = @description, updatedAt = @updatedAt WHERE id = @id');
+    await finishTaskCommand(ctx, req, res);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 app.patch('/tasks/:id/reminder', requireAuth, async (req, res) => {
-  const { id } = req.params;
   const { reminderAt } = req.body;
   try {
-    const p = await getPool();
-    const taskResult = await p.request().input('id', sql.NVarChar, id).query('SELECT domainId FROM Task WHERE id = @id');
-    if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
-    const access = await p.request()
-      .input('orbitId', sql.NVarChar, taskResult.recordset[0].domainId)
-      .input('userId',  sql.NVarChar, req.user.userId)
-      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
-    if (access.recordset.length === 0) return res.status(403).json({ error: 'Kein Zugriff' });
+    const ctx = await beginTaskCommand(req, res, 'task_reminder');
+    if (!ctx) return;
 
-    const result = await p.request()
-      .input('id',         sql.NVarChar,  id)
+    await ctx.p.request()
+      .input('id',         sql.NVarChar,  ctx.task.id)
       .input('reminderAt', sql.DateTime2, reminderAt ? new Date(reminderAt) : null)
-      .query('UPDATE Task SET reminderAt = @reminderAt, reminderEmailSentAt = NULL WHERE id = @id');
-    if (result.rowsAffected[0] === 0) return res.status(404).json({ error: 'Task not found' });
-    res.json({ success: true });
+      .input('updatedAt',  sql.DateTime2, ctx.geschehenAm)
+      .query(`UPDATE Task
+              SET reminderAt = @reminderAt, reminderEmailSentAt = NULL,
+                  updatedAt = @updatedAt
+              WHERE id = @id`);
+    await finishTaskCommand(ctx, req, res);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 app.patch('/tasks/:id/domain', requireAuth, async (req, res) => {
-  const { id } = req.params;
   const { domainId } = req.body;
   if (!domainId) return res.status(400).json({ error: 'domainId required' });
   try {
-    const p = await getPool();
-    // Zugriff auf Quell-Task und Ziel-Orbit prüfen
-    const taskResult = await p.request().input('id', sql.NVarChar, id).query('SELECT domainId FROM Task WHERE id = @id');
-    if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
+    // Der Kopf prueft den QUELL-Orbit; der Ziel-Orbit kommt gleich dazu.
+    const ctx = await beginTaskCommand(req, res, 'task_move');
+    if (!ctx) return;
 
-    const sourceAccess = await p.request()
-      .input('orbitId', sql.NVarChar, taskResult.recordset[0].domainId)
-      .input('userId',  sql.NVarChar, req.user.userId)
-      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
-    const targetAccess = await p.request()
+    const targetAccess = await ctx.p.request()
       .input('orbitId', sql.NVarChar, domainId)
       .input('userId',  sql.NVarChar, req.user.userId)
-      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
-    if (sourceAccess.recordset.length === 0 || targetAccess.recordset.length === 0) {
+      .query(`SELECT id FROM OrbitMember
+              WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
+    if (targetAccess.recordset.length === 0) {
       return res.status(403).json({ error: 'Kein Zugriff' });
     }
 
-    const result = await p.request()
-      .input('id',       sql.NVarChar, id)
-      .input('domainId', sql.NVarChar, domainId)
-      .query('UPDATE Task SET domainId = @domainId WHERE id = @id');
-    if (result.rowsAffected[0] === 0) return res.status(404).json({ error: 'Task not found' });
-    res.json({ success: true });
+    await ctx.p.request()
+      .input('id',        sql.NVarChar,  ctx.task.id)
+      .input('domainId',  sql.NVarChar,  domainId)
+      .input('updatedAt', sql.DateTime2, ctx.geschehenAm)
+      .query('UPDATE Task SET domainId = @domainId, updatedAt = @updatedAt WHERE id = @id');
+    await finishTaskCommand(ctx, req, res);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2231,23 +2438,13 @@ app.patch('/tasks/:id/domain', requireAuth, async (req, res) => {
 // Sphere einer Person zuweisen (oder Zuweisung aufheben mit memberId = null).
 // Die Person muss aktives Mitglied (Pilot/Co-Pilot) DESSELBEN Orbits sein.
 app.patch('/tasks/:id/assignee', requireAuth, async (req, res) => {
-  const { id } = req.params;
   const { memberId } = req.body;
   try {
-    const p = await getPool();
-
-    const taskResult = await p.request()
-      .input('id', sql.NVarChar, id)
-      .query('SELECT domainId FROM Task WHERE id = @id');
-    if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
-    const orbitId = taskResult.recordset[0].domainId;
-
-    // Aufrufer muss aktives Mitglied des Orbits sein
-    const access = await p.request()
-      .input('orbitId', sql.NVarChar, orbitId)
-      .input('userId',  sql.NVarChar, req.user.userId)
-      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
-    if (access.recordset.length === 0) return res.status(403).json({ error: 'Kein Zugriff' });
+    const ctx = await beginTaskCommand(req, res, 'task_assign');
+    if (!ctx) return;
+    const p = ctx.p;
+    const id = ctx.task.id;
+    const orbitId = ctx.task.domainId;
 
     // Wenn zugewiesen: Zielperson muss aktives Mitglied genau dieses Orbits sein
     if (memberId) {
@@ -2256,15 +2453,23 @@ app.patch('/tasks/:id/assignee', requireAuth, async (req, res) => {
         .input('orbitId',  sql.NVarChar, orbitId)
         .query(`SELECT id FROM OrbitMember WHERE id = @memberId AND orbitId = @orbitId AND status = 'active'`);
       if (member.recordset.length === 0) {
+        // Aus der Warteschlange heisst das meist: Die Person wurde inzwischen
+        // aus dem Orbit entfernt. Kein Fehler, die Zuweisung entfaellt.
+        if (ctx.commandId) {
+          const antwort = { success: true, superseded: true };
+          await rememberCommand(p, ctx.commandId, req.user.userId, ctx.kind, antwort);
+          return res.json(antwort);
+        }
         return res.status(400).json({ error: 'Person ist kein aktives Mitglied dieses Orbits' });
       }
     }
 
     await p.request()
-      .input('id',       sql.NVarChar, id)
-      .input('memberId', sql.NVarChar, memberId || null)
-      .query('UPDATE Task SET assignedToMemberId = @memberId WHERE id = @id');
-    res.json({ success: true });
+      .input('id',        sql.NVarChar,  id)
+      .input('memberId',  sql.NVarChar,  memberId || null)
+      .input('updatedAt', sql.DateTime2, ctx.geschehenAm)
+      .query('UPDATE Task SET assignedToMemberId = @memberId, updatedAt = @updatedAt WHERE id = @id');
+    await finishTaskCommand(ctx, req, res);
 
     // Nur bei aktiver Zuweisung benachrichtigen (nicht beim Aufheben).
     if (memberId) {
@@ -2294,20 +2499,17 @@ app.patch('/tasks/:id/assignee', requireAuth, async (req, res) => {
 });
 
 app.patch('/tasks/:id/schedule', requireAuth, async (req, res) => {
-  const { id } = req.params;
   const { startDate, dueDate, recurrenceFrequency, recurrenceInterval } = req.body;
   try {
-    const p = await getPool();
-    const taskResult = await p.request().input('id', sql.NVarChar, id).query('SELECT domainId FROM Task WHERE id = @id');
-    if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
-    const access = await p.request()
-      .input('orbitId', sql.NVarChar, taskResult.recordset[0].domainId)
-      .input('userId',  sql.NVarChar, req.user.userId)
-      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
-    if (access.recordset.length === 0) return res.status(403).json({ error: 'Kein Zugriff' });
+    const ctx = await beginTaskCommand(req, res, 'task_schedule');
+    if (!ctx) return;
+    const p = ctx.p;
+    const id = ctx.task.id;
 
-    const setClauses = [];
-    const req2 = p.request().input('id', sql.NVarChar, id);
+    const setClauses = ['updatedAt = @updatedAt'];
+    const req2 = p.request()
+      .input('id',        sql.NVarChar,  id)
+      .input('updatedAt', sql.DateTime2, ctx.geschehenAm);
     if (startDate !== undefined) {
       setClauses.push('startDate = @startDate');
       req2.input('startDate', sql.DateTime2, startDate ? new Date(startDate) : null);
@@ -2324,27 +2526,25 @@ app.patch('/tasks/:id/schedule', requireAuth, async (req, res) => {
       setClauses.push('recurrenceInterval = @recurrenceInterval');
       req2.input('recurrenceInterval', sql.Int, recurrenceInterval);
     }
-    if (setClauses.length === 0) return res.status(400).json({ error: 'Nothing to update' });
+    // Nur updatedAt allein waere keine Aenderung.
+    if (setClauses.length === 1) return res.status(400).json({ error: 'Nothing to update' });
 
-    const result = await req2.query(`UPDATE Task SET ${setClauses.join(', ')} WHERE id = @id`);
-    if (result.rowsAffected[0] === 0) return res.status(404).json({ error: 'Task not found' });
-    res.json({ success: true });
+    await req2.query(`UPDATE Task SET ${setClauses.join(', ')} WHERE id = @id`);
+    await finishTaskCommand(ctx, req, res);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
 });
 
 app.delete('/tasks/:id', requireAuth, async (req, res) => {
-  const { id } = req.params;
   try {
-    const p = await getPool();
-    const taskResult = await p.request().input('id', sql.NVarChar, id).query('SELECT domainId FROM Task WHERE id = @id');
-    if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
-    const access = await p.request()
-      .input('orbitId', sql.NVarChar, taskResult.recordset[0].domainId)
-      .input('userId',  sql.NVarChar, req.user.userId)
-      .query(`SELECT id FROM OrbitMember WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
-    if (access.recordset.length === 0) return res.status(403).json({ error: 'Kein Zugriff' });
+    // pruefeAlter aus: Loeschen ist endgueltig und soll nicht daran scheitern,
+    // dass jemand die Sphere zwischenzeitlich umbenannt hat. Wer loescht, will
+    // sie weghaben - eine juengere Textaenderung aendert daran nichts.
+    const ctx = await beginTaskCommand(req, res, 'task_delete', { pruefeAlter: false });
+    if (!ctx) return;
+    const p = ctx.p;
+    const id = ctx.task.id;
 
     await p.request()
       .input('id', sql.NVarChar, id)
@@ -2357,7 +2557,7 @@ app.delete('/tasks/:id', requireAuth, async (req, res) => {
       .input('id', sql.NVarChar, id)
       .query('DELETE FROM Task WHERE id = @id');
 
-    res.json({ success: true });
+    await finishTaskCommand(ctx, req, res);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2410,10 +2610,28 @@ app.post('/logs', requireAuth, async (req, res) => {
     return res.status(400).json({ error: 'Der Eintrag braucht einen Text oder einen Anhang.' });
   }
 
-  const id  = uuidv4();
-  const now = new Date();
+  // Kennung und Zeitpunkt duerfen vom Geraet kommen – ein offline verfasster
+  // Eintrag soll spaeter an seiner richtigen Stelle im Verlauf stehen, nicht
+  // dort, wo der Abgleich zufaellig lief.
+  const mitgebracht = typeof req.body.id === 'string' ? req.body.id.trim() : '';
+  const id  = mitgebracht.length > 0 && mitgebracht.length <= 100 ? mitgebracht : uuidv4();
+  const now = occurredAtFromRequest(req);
+  const commandId = commandIdFromRequest(req);
   try {
     const p = await getPool();
+
+    const frueher = await findHandledCommand(p, commandId, req.user.userId);
+    if (frueher) return res.json(frueher);
+
+    const schonDa = await p.request()
+      .input('id', sql.NVarChar, id)
+      .query('SELECT * FROM TaskLogEntry WHERE id = @id');
+    if (schonDa.recordset.length > 0) {
+      const antwort = { ...schonDa.recordset[0], taskStatus: null, linkedAttachments: 0 };
+      await rememberCommand(p, commandId, req.user.userId, 'log_create', antwort);
+      return res.json(antwort);
+    }
+
     const taskResult = await p.request().input('id', sql.NVarChar, taskId).query('SELECT domainId FROM Task WHERE id = @id');
     if (taskResult.recordset.length === 0) return res.status(404).json({ error: 'Task not found' });
     const access = await p.request()
@@ -2468,7 +2686,9 @@ app.post('/logs', requireAuth, async (req, res) => {
       .query("UPDATE Task SET status = 'inProgress' WHERE id = @taskId AND status = 'open'");
     const taskStatus = update.rowsAffected[0] > 0 ? 'inProgress' : null;
 
-    res.json({ ...result.recordset[0], user: userLabel, taskStatus, linkedAttachments });
+    const antwort = { ...result.recordset[0], user: userLabel, taskStatus, linkedAttachments };
+    await rememberCommand(p, commandId, req.user.userId, 'log_create', antwort);
+    res.json(antwort);
 
     const orbitId = taskResult.recordset[0].domainId;
     const titleRow = await p.request()
@@ -2500,10 +2720,44 @@ app.post('/tasks/:taskId/attachments', requireAuth, upload.single('file'), async
   const { taskId } = req.params;
   if (!req.file) return res.status(400).json({ error: 'Keine Datei empfangen' });
 
+  // Auftragskennung und Anhangskennung kommen als Formularfelder mit - bei
+  // einer mehrteiligen Uebertragung gibt es keinen JSON-Koerper. Ohne diesen
+  // Schutz waere ein abgebrochener Upload der teuerste Wiederholungsfall:
+  // Die Datei liegt dann doppelt im Speicherkonto und wird doppelt bezahlt.
+  const commandId = commandIdFromRequest(req)
+    || (typeof req.body?.commandId === 'string' ? req.body.commandId.slice(0, 100) : null);
+  const mitgebracht = typeof req.body?.id === 'string' ? req.body.id.trim() : '';
+
   try {
     const p = await getPool();
+
+    const frueher = await findHandledCommand(p, commandId, req.user.userId);
+    if (frueher) return res.json(frueher);
+
+    if (mitgebracht.length > 0) {
+      const schonDa = await p.request()
+        .input('id', sql.NVarChar, mitgebracht)
+        .query(`SELECT id, taskId, logEntryId, fileName, contentType, sizeBytes,
+                       isImage, uploadedBy, uploadedByName, createdAt, blobDeletedAt
+                FROM TaskAttachment WHERE id = @id`);
+      if (schonDa.recordset.length > 0) {
+        const antwort = schonDa.recordset[0];
+        await rememberCommand(p, commandId, req.user.userId, 'attachment_upload', antwort);
+        return res.json(antwort);
+      }
+    }
+
     const { task, allowed } = await loadTaskForUser(p, taskId, req.user.userId);
-    if (!task) return res.status(404).json({ error: 'Sphere nicht gefunden' });
+    if (!task) {
+      // Sphere inzwischen geloescht. Aus der Warteschlange kein Fehler - der
+      // Anhang haette ohnehin nichts mehr, woran er haengen koennte.
+      if (commandId) {
+        const antwort = { success: true, gone: true };
+        await rememberCommand(p, commandId, req.user.userId, 'attachment_upload', antwort);
+        return res.json(antwort);
+      }
+      return res.status(404).json({ error: 'Sphere nicht gefunden' });
+    }
     if (!allowed) return res.status(403).json({ error: 'Kein Zugriff' });
 
     // Wer das Schreiben mehrfach abbricht, soll nicht unbegrenzt Dateien
@@ -2526,7 +2780,7 @@ app.post('/tasks/:taskId/attachments', requireAuth, upload.single('file'), async
       || (req.file.mimetype || 'application/octet-stream').slice(0, 150);
     const fileName = (req.file.originalname || 'datei').slice(0, 255);
 
-    const id = uuidv4();
+    const id = mitgebracht.length > 0 && mitgebracht.length <= 100 ? mitgebracht : uuidv4();
     const blobName = `${taskId}/${id}${safeExtension(fileName)}`;
 
     const container = await getContainer();
@@ -2575,7 +2829,9 @@ app.post('/tasks/:taskId/attachments', requireAuth, upload.single('file'), async
       throw dbErr;
     }
 
-    res.json(inserted.recordset[0]);
+    const antwort = inserted.recordset[0];
+    await rememberCommand(p, commandId, req.user.userId, 'attachment_upload', antwort);
+    res.json(antwort);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2651,13 +2907,26 @@ app.get('/attachments/:id/content', requireAuth, async (req, res) => {
 // Loeschen darf, wer die Datei hochgeladen hat - man laedt sich schnell einmal
 // das falsche Bild hoch - und zusaetzlich der Pilot des Orbits.
 app.delete('/attachments/:id', requireAuth, async (req, res) => {
+  const commandId = commandIdFromRequest(req);
   try {
     const p = await getPool();
+
+    const frueher = await findHandledCommand(p, commandId, req.user.userId);
+    if (frueher) return res.json(frueher);
+
     const row = await p.request()
       .input('id', sql.NVarChar, req.params.id)
       .query('SELECT * FROM TaskAttachment WHERE id = @id');
     const att = row.recordset[0];
-    if (!att) return res.status(404).json({ error: 'Anhang nicht gefunden' });
+    if (!att) {
+      // Schon weg – aus der Warteschlange ist das der gewuenschte Zustand.
+      if (commandId) {
+        const antwort = { success: true, gone: true };
+        await rememberCommand(p, commandId, req.user.userId, 'attachment_delete', antwort);
+        return res.json(antwort);
+      }
+      return res.status(404).json({ error: 'Anhang nicht gefunden' });
+    }
 
     const { task, allowed } = await loadTaskForUser(p, att.taskId, req.user.userId);
     if (!task || !allowed) return res.status(403).json({ error: 'Kein Zugriff' });
@@ -2683,7 +2952,9 @@ app.delete('/attachments/:id', requireAuth, async (req, res) => {
       .input('id', sql.NVarChar, att.id)
       .query('DELETE FROM TaskAttachment WHERE id = @id');
 
-    res.json({ success: true });
+    const antwort = { success: true };
+    await rememberCommand(p, commandId, req.user.userId, 'attachment_delete', antwort);
+    res.json(antwort);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2906,6 +3177,12 @@ async function runScheduler() {
     //    Archiv zurueckholen. Betrifft ausschliesslich Orbits mit
     //    isShoppingList = 1 – normale Orbits behalten ihr Archiv unveraendert.
     const cutoff = new Date(now.getTime() - 24 * 60 * 60 * 1000);
+    // Gerechnet wird ab dem SPAETEREN von Erledigung und Eingang beim Server.
+    // Wer Samstag im Laden offline abhakt und erst Dienstag wieder online geht,
+    // saehe die Position sonst nie unter "Erledigt": Sie waere beim Ankommen
+    // bereits ueber der Frist und verschwaende beim naechsten Lauf. So bleiben
+    // ihm seine vollen 24 Stunden zum Zurueckholen. Bei Online-Erledigungen
+    // sind beide Zeitpunkte gleich - dort aendert sich nichts.
     const stale = await p.request()
       .input('cutoff', sql.DateTime2, cutoff)
       .query(`SELECT t.id
@@ -2914,7 +3191,8 @@ async function runScheduler() {
               WHERE d.isShoppingList = 1
                 AND t.status = 'done'
                 AND t.completedAt IS NOT NULL
-                AND t.completedAt <= @cutoff`);
+                AND (CASE WHEN t.completedSeenAt > t.completedAt
+                          THEN t.completedSeenAt ELSE t.completedAt END) <= @cutoff`);
 
     for (const row of stale.recordset) {
       try {
@@ -2942,6 +3220,7 @@ async function runScheduler() {
       lastAttachmentSweep = now.getTime();
       await sweepAttachments(p, now);
       await sweepLandedSpheres(p, now);
+      await sweepSyncCommands(p, now);
     }
   } catch (err) {
     console.error('Scheduler error:', err.message);
@@ -3086,6 +3365,23 @@ async function sweepLandedSpheres(p, now) {
     }
   } catch (err) {
     console.error('Aufraeumen gelandeter Spheres fehlgeschlagen:', err.message);
+  }
+}
+
+// Alte Auftragskennungen entsorgen. 30 Tage sind grosszuegig: Kein Geraet
+// versucht laenger, einen Auftrag loszuwerden. Ohne das Aufraeumen waere die
+// Tabelle die einzige im Aufbau, die nur waechst.
+async function sweepSyncCommands(p, now) {
+  try {
+    const cutoff = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+    const result = await p.request()
+      .input('cutoff', sql.DateTime2, cutoff)
+      .query('DELETE FROM SyncCommand WHERE receivedAt <= @cutoff');
+    if (result.rowsAffected[0] > 0) {
+      console.log(`Scheduler: ${result.rowsAffected[0]} alte Auftragskennung(en) entfernt`);
+    }
+  } catch (err) {
+    console.error('Aufraeumen der Auftragskennungen fehlgeschlagen:', err.message);
   }
 }
 

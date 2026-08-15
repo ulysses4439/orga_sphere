@@ -102,6 +102,22 @@ CREATE TABLE OrbitMember (
 --   ERSTEN Sphere der Serie. Einmalige Spheres tragen ihre eigene id.
 --   previousTaskId allein wuerde reichen, um die Kette zu bilden, aber nicht,
 --   um "die letzten 20 dieser Serie" ohne Entlanghangeln zu finden.
+-- updatedAt: Fuer "der spaetere gewinnt" beim Offline-Abgleich. Verglichen
+--   wird, WANN etwas geschah, nicht wann es ankam - aendert jemand um 11 Uhr
+--   online und ein anderer um 10 Uhr offline, gewinnt der Erste, auch wenn die
+--   Offline-Aenderung erst um 12 Uhr eintrifft.
+-- completedSeenAt: Wann der Server von der Erledigung erfuhr. completedAt
+--   bleibt der ECHTE Zeitpunkt (Anzeige, Verlauf); die 24-Stunden-Frist der
+--   Einkaufslisten rechnet ab dem SPAETEREN der beiden. Sonst waere eine
+--   Position, die Samstag offline abgehakt und erst Dienstag gemeldet wird,
+--   beim Ankommen schon ueber der Frist und verschwaende sofort.
+--   Bei Online-Erledigungen sind beide gleich.
+--
+-- Kennungen von Folge-Spheres sind BERECHENBAR: "<seriesId>:<JJJJ-MM-TT>"
+-- statt zufaellig. Ein Geraet ohne Netz muss die naechste Ausgabe selbst
+-- anlegen koennen, waehrend der Scheduler dasselbe tut - mit Zufallskennungen
+-- gaebe es dann zwei Zeilen fuer denselben Termin. So kommen beide Seiten
+-- unabhaengig auf dieselbe Kennung, und der zweite Versuch faellt still durch.
 -- reminderEmailSentAt: verhindert Doppelversand durch den Scheduler.
 -- ----------------------------------------------------------------------------
 CREATE TABLE Task (
@@ -121,6 +137,8 @@ CREATE TABLE Task (
     previousTaskId      NVARCHAR(100)  NULL,
     assignedToMemberId  NVARCHAR(100)  NULL,
     seriesId            NVARCHAR(100)  NULL,
+    updatedAt           DATETIME2      NULL,
+    completedSeenAt     DATETIME2      NULL,
     CONSTRAINT FK_Task_Domain       FOREIGN KEY (domainId)       REFERENCES TaskDomain(id),
     CONSTRAINT FK_Task_PreviousTask FOREIGN KEY (previousTaskId) REFERENCES Task(id)
 );
@@ -188,6 +206,35 @@ CREATE INDEX IX_TaskAttachment_Task ON TaskAttachment (taskId);
 
 CREATE INDEX IX_TaskAttachment_Cleanup ON TaskAttachment (createdAt)
     WHERE blobDeletedAt IS NULL;
+
+
+-- ----------------------------------------------------------------------------
+-- SyncCommand - Auftraege aus der Offline-Warteschlange, genau einmal ausgefuehrt
+--
+-- Ein Geraet weiss nach einem Verbindungsabbruch nicht, ob sein Auftrag
+-- angekommen ist. Sendet es erneut, entstuenden sonst doppelte
+-- Verlaufseintraege oder doppelte Anhaenge. Jeder Auftrag traegt deshalb eine
+-- vom GERAET vergebene Kennung (Kopfzeile X-Command-Id); der Server merkt sich
+-- die erledigten und antwortet beim zweiten Mal mit dem Ergebnis des ersten
+-- Durchlaufs, ohne etwas zu tun.
+--
+-- response haelt die urspruengliche Antwort als JSON. Ohne sie wuesste die App
+-- bei einer Wiederholung etwa nicht, welche Folge-Sphere entstanden ist.
+--
+-- userId wird beim Nachschlagen mitgeprueft: Eine erratene fremde
+-- Auftragskennung soll niemandem die Antwort eines anderen ausliefern.
+--
+-- Aufgeraeumt wird nach 30 Tagen - so lange versucht es keine Warteschlange.
+-- ----------------------------------------------------------------------------
+CREATE TABLE SyncCommand (
+    id         NVARCHAR(100) NOT NULL PRIMARY KEY,
+    userId     NVARCHAR(100) NOT NULL,
+    kind       NVARCHAR(50)  NOT NULL,
+    receivedAt DATETIME2     NOT NULL DEFAULT GETUTCDATE(),
+    response   NVARCHAR(MAX) NULL
+);
+
+CREATE INDEX IX_SyncCommand_ReceivedAt ON SyncCommand (receivedAt);
 
 
 -- ----------------------------------------------------------------------------
