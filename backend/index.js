@@ -71,6 +71,7 @@ const FIELD_LIMITS = {
   orbitDescription:  500,   // TaskDomain.description
   logText:           1000,  // TaskLogEntry.text
   displayName:       200,   // AppUser.displayName
+  orbitIcon:         50,    // TaskDomain.icon (Emoji, siehe schema.sql)
 };
 
 // Antwortet mit 400 und gibt true zurueck, wenn `value` zu lang ist.
@@ -112,6 +113,16 @@ const ATTACHMENT_RETENTION_DAYS =
 // Verwaiste Anhaenge: hochgeladen, aber nie einem Verlaufseintrag zugeordnet -
 // jemand hat das Schreiben abgebrochen. Nach dieser Frist werden sie entsorgt.
 const ATTACHMENT_ORPHAN_HOURS = 24;
+
+// Wie lange eine gelandete EINMALIGE Sphere bleibt. Bei wiederkehrenden greift
+// stattdessen die Anzahl je Serie (TaskDomain.keepLandedCount): Eine Frist
+// traefe die Frequenzen ungleich - eine Sphere alle drei Tage sammelte in
+// einem Jahr rund 120 Ausgaben an, eine jaehrliche haette nie mehr als eine.
+const LANDED_SINGLE_RETENTION_DAYS =
+  parseInt(process.env.LANDED_SINGLE_RETENTION_DAYS || '365', 10) || 365;
+
+// Vorgabe fuer neue Orbits, wenn beim Anlegen nichts angegeben wird.
+const DEFAULT_KEEP_LANDED_COUNT = 20;
 
 let containerClient;
 
@@ -620,12 +631,18 @@ async function createNextCapsuleIfNeeded(p, task) {
     .input('recurrenceInterval',   sql.Int,       task.recurrenceInterval)
     .input('previousTaskId',       sql.NVarChar,  task.id)
     .input('assignedToMemberId',   sql.NVarChar,  task.assignedToMemberId || null)
+    // Serien-Kennung von der Vorgaengerin uebernehmen. Faellt sie leer aus
+    // (Sphere von vor der Migration), tritt deren id an ihre Stelle - dann
+    // beginnt die Serie eben dort.
+    .input('seriesId',             sql.NVarChar,  task.seriesId || task.id)
     .query(`INSERT INTO Task
               (id, domainId, title, description, startDate, dueDate, reminderAt,
-               recurrenceFrequency, recurrenceInterval, status, previousTaskId, assignedToMemberId)
+               recurrenceFrequency, recurrenceInterval, status, previousTaskId, assignedToMemberId,
+               seriesId)
             OUTPUT INSERTED.*
             VALUES (@id, @domainId, @title, @description, @startDate, @dueDate, @reminderAt,
-                    @recurrenceFrequency, @recurrenceInterval, 'open', @previousTaskId, @assignedToMemberId)`);
+                    @recurrenceFrequency, @recurrenceInterval, 'open', @previousTaskId, @assignedToMemberId,
+                    @seriesId)`);
 
   return result.recordset[0];
 }
@@ -1477,9 +1494,14 @@ app.get('/domains', requireAuth, async (req, res) => {
 });
 
 app.post('/domains', requireAuth, async (req, res) => {
-  const { name, description, color, isShoppingList } = req.body;
+  const { name, description, color, isShoppingList, icon, keepLandedCount } = req.body;
   if (rejectIfTooLong(res, 'Der Name', name, FIELD_LIMITS.orbitName)) return;
   if (rejectIfTooLong(res, 'Die Beschreibung', description, FIELD_LIMITS.orbitDescription)) return;
+  if (rejectIfTooLong(res, 'Das Symbol', icon, FIELD_LIMITS.orbitIcon)) return;
+  const behalten = normalizeKeepCount(keepLandedCount);
+  if (behalten === null) {
+    return res.status(400).json({ error: KEEP_COUNT_FEHLER });
+  }
   const id = uuidv4();
   try {
     const p = await getPool();
@@ -1489,9 +1511,11 @@ app.post('/domains', requireAuth, async (req, res) => {
       .input('description', sql.NVarChar, description)
       .input('color',       sql.NVarChar, color || '#F5F5F5')
       .input('isShoppingList', sql.Bit,   isShoppingList ? 1 : 0)
-      .query(`INSERT INTO TaskDomain (id, name, description, color, isShoppingList)
+      .input('icon',        sql.NVarChar, normalizeIcon(icon))
+      .input('keepLandedCount', sql.Int,  behalten)
+      .query(`INSERT INTO TaskDomain (id, name, description, color, isShoppingList, icon, keepLandedCount)
               OUTPUT INSERTED.*
-              VALUES (@id, @name, @description, @color, @isShoppingList)`);
+              VALUES (@id, @name, @description, @color, @isShoppingList, @icon, @keepLandedCount)`);
 
     // Ersteller wird automatisch Pilot
     await p.request()
@@ -1520,6 +1544,70 @@ app.patch('/domains/:id', requireAuth, requireMember, async (req, res) => {
       .input('color', sql.NVarChar, color ?? null)
       .query('UPDATE TaskDomain SET color = @color WHERE id = @id');
     if (result.rowsAffected[0] === 0) return res.status(404).json({ error: 'Domain not found' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Leerer Text bedeutet "kein Symbol" – dann wieder NULL, damit die App
+// zuverlaessig am Nullwert erkennt, dass der farbige Punkt zu zeichnen ist.
+function normalizeIcon(icon) {
+  const wert = typeof icon === 'string' ? icon.trim() : '';
+  return wert.length > 0 ? wert : null;
+}
+
+const KEEP_COUNT_FEHLER =
+  'Die Zahl aufzuhebender Spheres muss zwischen 1 und 500 liegen.';
+
+// Prueft und normalisiert die Aufbewahrungszahl.
+// Rueckgabe: die Zahl, oder null bei ungueltiger Eingabe.
+// Fehlt der Wert ganz, gilt die Vorgabe - dann muss niemand etwas angeben.
+//
+// Untergrenze 1, nicht 0: Bei 0 wuerde auch die zuletzt erledigte Ausgabe
+// verschwinden, und damit die Antwort auf "wie haben wir das letzte Mal
+// gemacht?" - der haeufigste Grund, ueberhaupt in den Verlauf zu schauen.
+function normalizeKeepCount(wert) {
+  if (wert === undefined || wert === null || wert === '') {
+    return DEFAULT_KEEP_LANDED_COUNT;
+  }
+  const zahl = parseInt(wert, 10);
+  if (Number.isNaN(zahl) || zahl < 1 || zahl > 500) return null;
+  return zahl;
+}
+
+// Wie viele gelandete Ausgaben je Serie bleiben – Pilotensache, denn Loeschen
+// wirkt fuer alle Mitglieder des Orbits.
+app.patch('/domains/:id/keep-landed', requireAuth, requirePilot, async (req, res) => {
+  const behalten = normalizeKeepCount(req.body.keepLandedCount);
+  if (behalten === null) return res.status(400).json({ error: KEEP_COUNT_FEHLER });
+  try {
+    const p = await getPool();
+    const result = await p.request()
+      .input('id',    sql.NVarChar, req.params.id)
+      .input('anzahl', sql.Int,     behalten)
+      .query('UPDATE TaskDomain SET keepLandedCount = @anzahl WHERE id = @id');
+    if (result.rowsAffected[0] === 0) return res.status(404).json({ error: 'Orbit nicht gefunden' });
+    res.json({ success: true });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Das Symbol ist Pilotensache, aus demselben Grund wie der Name: Es steht in
+// der Orbit-Liste aller Mitglieder. Ein Co-Pilot soll es nicht unter allen
+// anderen wegaendern koennen.
+app.patch('/domains/:id/icon', requireAuth, requirePilot, async (req, res) => {
+  const { id } = req.params;
+  const { icon } = req.body;
+  if (rejectIfTooLong(res, 'Das Symbol', icon, FIELD_LIMITS.orbitIcon)) return;
+  try {
+    const p = await getPool();
+    const result = await p.request()
+      .input('id',   sql.NVarChar, id)
+      .input('icon', sql.NVarChar, normalizeIcon(icon))
+      .query('UPDATE TaskDomain SET icon = @icon WHERE id = @id');
+    if (result.rowsAffected[0] === 0) return res.status(404).json({ error: 'Orbit nicht gefunden' });
     res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -1905,12 +1993,15 @@ app.post('/tasks', requireAuth, async (req, res) => {
       .input('dueDate',             sql.DateTime2, dueDate ? new Date(dueDate) : null)
       .input('recurrenceFrequency', sql.NVarChar,  recurrenceFrequency || 'none')
       .input('recurrenceInterval',  sql.Int,       recurrenceInterval || 1)
+      // Eine neu angelegte Sphere eroeffnet ihre eigene Serie. Folge-Spheres
+      // erben diese Kennung spaeter in createNextCapsuleIfNeeded.
+      .input('seriesId',            sql.NVarChar,  id)
       .query(`INSERT INTO Task
                 (id, domainId, title, description, startDate, dueDate,
-                 recurrenceFrequency, recurrenceInterval, status)
+                 recurrenceFrequency, recurrenceInterval, status, seriesId)
               OUTPUT INSERTED.*
               VALUES (@id, @domainId, @title, @description, @startDate, @dueDate,
-                      @recurrenceFrequency, @recurrenceInterval, 'open')`);
+                      @recurrenceFrequency, @recurrenceInterval, 'open', @seriesId)`);
     res.json(result.recordset[0]);
 
     // Team-Benachrichtigung (nach der Antwort – darf die Erstellung nicht blockieren)
@@ -2850,6 +2941,7 @@ async function runScheduler() {
     if (!lastAttachmentSweep || now.getTime() - lastAttachmentSweep >= 24 * 60 * 60 * 1000) {
       lastAttachmentSweep = now.getTime();
       await sweepAttachments(p, now);
+      await sweepLandedSpheres(p, now);
     }
   } catch (err) {
     console.error('Scheduler error:', err.message);
@@ -2903,6 +2995,97 @@ async function sweepAttachments(p, now) {
     }
   } catch (err) {
     console.error('Anhang-Aufraeumlauf fehlgeschlagen:', err.message);
+  }
+}
+
+// Loescht eine Sphere samt allem, was an ihr haengt: Anhaenge (Dateien und
+// Zeilen), Verlaufseintraege, und loest die Kette der Wiederholung auf.
+// Reihenfolge ist Pflicht - die Fremdschluessel lassen es sonst nicht zu.
+async function purgeTask(p, taskId) {
+  await p.request()
+    .input('prevId', sql.NVarChar, taskId)
+    .query('UPDATE Task SET previousTaskId = NULL WHERE previousTaskId = @prevId');
+  await purgeAttachmentsForTask(p, taskId);
+  await p.request()
+    .input('taskId', sql.NVarChar, taskId)
+    .query('DELETE FROM TaskLogEntry WHERE taskId = @taskId');
+  await p.request()
+    .input('id', sql.NVarChar, taskId)
+    .query('DELETE FROM Task WHERE id = @id');
+}
+
+// Raeumt gelandete Spheres ab, damit die Datenbank nicht unbegrenzt waechst.
+//
+// Zwei Regeln, weil die eine allein nicht taugt:
+//
+//   a) Wiederkehrende: je Serie bleiben die letzten keepLandedCount erhalten.
+//      Anzahl statt Frist, weil eine Frist die Frequenzen ungleich trifft -
+//      eine Sphere alle drei Tage sammelt in einem Jahr rund 120 Ausgaben an,
+//      eine jaehrliche haette nie mehr als eine.
+//
+//   b) Einmalige: die gehoeren zu keiner Serie, dort greift die Anzahl nicht.
+//      Sie verschwinden LANDED_SINGLE_RETENTION_DAYS nach dem Erledigen.
+//
+// OFFENE Spheres werden NIE angefasst - unabhaengig von Alter und Anzahl.
+async function sweepLandedSpheres(p, now) {
+  try {
+    // a) Wiederkehrende Serien
+    //
+    // ROW_NUMBER zaehlt je Serie von der juengsten Erledigung an. Alles
+    // jenseits von keepLandedCount faellt weg. Dass die juengste immer bleibt,
+    // ergibt sich daraus von selbst, solange der Wert mindestens 1 ist - was
+    // die Abfrage mit GREATEST-Ersatz sicherstellt.
+    const ueberzaehlig = await p.request().query(`
+      WITH Rang AS (
+        SELECT t.id,
+               ROW_NUMBER() OVER (
+                 PARTITION BY t.seriesId
+                 ORDER BY t.completedAt DESC, t.id DESC
+               ) AS platz,
+               CASE WHEN d.keepLandedCount < 1 THEN 1 ELSE d.keepLandedCount END AS behalten
+        FROM Task t
+        JOIN TaskDomain d ON d.id = t.domainId
+        WHERE t.status = 'done'
+          AND t.completedAt IS NOT NULL
+          AND t.seriesId IS NOT NULL
+          AND t.recurrenceFrequency <> 'none'
+      )
+      SELECT id FROM Rang WHERE platz > behalten`);
+
+    for (const row of ueberzaehlig.recordset) {
+      try {
+        await purgeTask(p, row.id);
+      } catch (err) {
+        console.error(`Aufraeumen: Sphere ${row.id} nicht loeschbar:`, err.message);
+      }
+    }
+
+    // b) Einmalige nach Frist
+    const cutoff = new Date(
+      now.getTime() - LANDED_SINGLE_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    const alte = await p.request()
+      .input('cutoff', sql.DateTime2, cutoff)
+      .query(`SELECT id FROM Task
+              WHERE status = 'done'
+                AND completedAt IS NOT NULL
+                AND completedAt <= @cutoff
+                AND recurrenceFrequency = 'none'`);
+
+    for (const row of alte.recordset) {
+      try {
+        await purgeTask(p, row.id);
+      } catch (err) {
+        console.error(`Aufraeumen: Sphere ${row.id} nicht loeschbar:`, err.message);
+      }
+    }
+
+    const gesamt = ueberzaehlig.recordset.length + alte.recordset.length;
+    if (gesamt > 0) {
+      console.log(`Scheduler: ${gesamt} gelandete Sphere(s) geloescht ` +
+        `(${ueberzaehlig.recordset.length} ueberzaehlig, ${alte.recordset.length} ueber der Frist)`);
+    }
+  } catch (err) {
+    console.error('Aufraeumen gelandeter Spheres fehlgeschlagen:', err.message);
   }
 }
 

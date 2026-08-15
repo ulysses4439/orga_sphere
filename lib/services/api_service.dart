@@ -148,15 +148,30 @@ class ApiService {
 
   static Future<TaskDomain> createDomain(
       String name, String description, String color,
-      {bool isShoppingList = false}) async {
+      {bool isShoppingList = false, String? icon, int? keepLandedCount}) async {
     final response = await _post('/domains', {
       'name': name,
       'description': description,
       'color': color,
       'isShoppingList': isShoppingList,
+      'icon': icon,
+      'keepLandedCount': ?keepLandedCount,
     });
     _checkStatus(response);
     return TaskDomain.fromJson(jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
+  /// Symbol setzen oder – mit leerem Text – wieder entfernen.
+  static Future<void> updateDomainIcon(String domainId, String? icon) async {
+    final response = await _patch('/domains/$domainId/icon', {'icon': icon ?? ''});
+    _checkStatus(response);
+  }
+
+  /// Wie viele gelandete Ausgaben je Wiederholungsserie aufgehoben werden.
+  static Future<void> updateDomainKeepLanded(String domainId, int anzahl) async {
+    final response = await _patch(
+        '/domains/$domainId/keep-landed', {'keepLandedCount': anzahl});
+    _checkStatus(response);
   }
 
   static Future<void> renameDomain(String domainId, String name) async {

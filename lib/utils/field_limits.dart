@@ -40,6 +40,17 @@ const int kMaxAttachmentsPerEntry = 5;
 /// Groesse einer einzelnen Datei. Spiegelt ATTACHMENT_MAX_BYTES im Backend.
 const int kMaxAttachmentBytes = 10 * 1024 * 1024;
 
+/// Vorgabe fuer TaskDomain.keepLandedCount – so viele gelandete Ausgaben je
+/// Wiederholungsserie bleiben erhalten. Spiegelt DEFAULT_KEEP_LANDED_COUNT im
+/// Backend.
+const int kDefaultKeepLandedCount = 20;
+
+/// Grenzen fuer die Eingabe. Untergrenze 1, nicht 0: Bei 0 verschwaende auch
+/// die zuletzt erledigte Ausgabe und damit die Antwort auf "wie haben wir das
+/// letzte Mal gemacht?".
+const int kMinKeepLandedCount = 1;
+const int kMaxKeepLandedCount = 500;
+
 /// Ab welchem Fuellstand [nearLimitCounter] den Zaehler einblendet.
 const double _kCounterThreshold = 0.8;
 

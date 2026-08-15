@@ -27,10 +27,15 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
   bool _saving = false;
   bool _isShoppingList = false;
 
+  /// Vorbelegt mit der Vorgabe – wer nichts ändern will, muss nichts tun.
+  final _keepController =
+      TextEditingController(text: '$kDefaultKeepLandedCount');
+
   @override
   void dispose() {
     _nameController.dispose();
     _descController.dispose();
+    _keepController.dispose();
     super.dispose();
   }
 
@@ -43,6 +48,7 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
         _descController.text.trim(),
         _selectedColor,
         isShoppingList: _isShoppingList,
+        keepLandedCount: int.tryParse(_keepController.text.trim()),
       );
       if (mounted) Navigator.of(context).pop(true);
     } catch (e) {
@@ -168,6 +174,42 @@ class _CreateDomainScreenState extends State<CreateDomainScreen> {
                     ),
                     controlAffinity: ListTileControlAffinity.leading,
                     contentPadding: EdgeInsets.zero,
+                  ),
+                  const SizedBox(height: 16),
+                  // Aufbewahrung: Anzahl statt Frist, weil eine Frist die
+                  // Wiederholungsrhythmen ungleich trifft. Der Text erklaert
+                  // das an einem Beispiel – die Zahl allein sagt niemandem,
+                  // was sie bedeutet.
+                  TextFormField(
+                    controller: _keepController,
+                    keyboardType: TextInputType.number,
+                    decoration: const InputDecoration(
+                      labelText: 'Erledigte Spheres aufheben',
+                      border: OutlineInputBorder(),
+                      suffixText: 'je Wiederholung',
+                    ),
+                    validator: (wert) {
+                      final zahl = int.tryParse((wert ?? '').trim());
+                      if (zahl == null ||
+                          zahl < kMinKeepLandedCount ||
+                          zahl > kMaxKeepLandedCount) {
+                        return 'Bitte eine Zahl zwischen '
+                            '$kMinKeepLandedCount und $kMaxKeepLandedCount angeben.';
+                      }
+                      return null;
+                    },
+                  ),
+                  const SizedBox(height: 6),
+                  Text(
+                    'Ältere erledigte Spheres einer Wiederholung werden gelöscht, '
+                    'damit die Liste nicht endlos wächst. Bei einer wöchentlichen '
+                    'Sphere sind 20 rund ein halbes Jahr, bei einer jährlichen '
+                    '20 Jahre. Einmalige Spheres verschwinden ein Jahr nach dem '
+                    'Erledigen. Später änderbar.',
+                    style: Theme.of(context)
+                        .textTheme
+                        .bodySmall
+                        ?.copyWith(color: Colors.grey[600]),
                   ),
                   const SizedBox(height: 24),
                   FilledButton(

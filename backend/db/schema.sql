@@ -20,13 +20,28 @@
 -- isShoppingList = 1: Orbit verhaelt sich wie eine Einkaufsliste (Positionen
 --   nur mit Titel, ein Klick landet direkt, gelandete Eintraege werden nach
 --   24 h geloescht, keine Team-Benachrichtigungen).
+-- keepLandedCount: Wie viele gelandete Ausgaben je Wiederholungsserie erhalten
+--   bleiben (Standard 20). Der Aufraeumlauf loescht alles darueber hinaus -
+--   Anzahl statt Frist, weil eine Frist die Frequenzen ungleich trifft: eine
+--   Sphere alle drei Tage sammelt in einem Jahr rund 120 Ausgaben an, eine
+--   jaehrliche haette nie mehr als eine. Einmalige Spheres verschwinden
+--   stattdessen 365 Tage nach dem Erledigen
+--   (LANDED_SINGLE_RETENTION_DAYS im Backend).
+-- icon: Emoji, das in der Ansicht den farbigen Punkt ersetzt. NULL = kein
+--   Symbol, dann bleibt es beim Punkt. Die Farbe bleibt in jedem Fall
+--   erhalten - sie faerbt auch die Sphere-Karten.
+--   NVARCHAR(50) fuer ein Zeichen ist kein Vertipper: Ein Emoji belegt meist
+--   zwei Einheiten, zusammengesetzte (Familien, Flaggen, Hautton) bis zu
+--   zwanzig.
 -- ----------------------------------------------------------------------------
 CREATE TABLE TaskDomain (
     id             NVARCHAR(100) NOT NULL PRIMARY KEY,
     name           NVARCHAR(100) NOT NULL,
     description    NVARCHAR(500) NULL,
     color          NVARCHAR(7)   NOT NULL DEFAULT '#F5F5F5',
-    isShoppingList BIT           NOT NULL DEFAULT 0
+    isShoppingList BIT           NOT NULL DEFAULT 0,
+    icon           NVARCHAR(50)  NULL,
+    keepLandedCount INT          NOT NULL DEFAULT 20
 );
 
 
@@ -83,6 +98,10 @@ CREATE TABLE OrbitMember (
 -- assignedToMemberId: bewusst OHNE FK-Constraint, damit das Entfernen eines
 --   Mitglieds nicht blockiert; das Aufraeumen macht das Backend
 --   (DELETE /domains/:id/members/:memberId).
+-- seriesId: Klammert alle Ausgaben einer Wiederholung zusammen - die id der
+--   ERSTEN Sphere der Serie. Einmalige Spheres tragen ihre eigene id.
+--   previousTaskId allein wuerde reichen, um die Kette zu bilden, aber nicht,
+--   um "die letzten 20 dieser Serie" ohne Entlanghangeln zu finden.
 -- reminderEmailSentAt: verhindert Doppelversand durch den Scheduler.
 -- ----------------------------------------------------------------------------
 CREATE TABLE Task (
@@ -101,9 +120,13 @@ CREATE TABLE Task (
     reminderEmailSentAt DATETIME2      NULL,
     previousTaskId      NVARCHAR(100)  NULL,
     assignedToMemberId  NVARCHAR(100)  NULL,
+    seriesId            NVARCHAR(100)  NULL,
     CONSTRAINT FK_Task_Domain       FOREIGN KEY (domainId)       REFERENCES TaskDomain(id),
     CONSTRAINT FK_Task_PreviousTask FOREIGN KEY (previousTaskId) REFERENCES Task(id)
 );
+
+-- Der Aufraeumlauf sucht je Serie die gelandeten, nach Erledigung sortiert.
+CREATE INDEX IX_Task_Series_Completed ON Task (seriesId, completedAt);
 
 
 -- ----------------------------------------------------------------------------

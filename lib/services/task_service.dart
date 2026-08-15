@@ -409,12 +409,36 @@ class TaskService extends ChangeNotifier {
 
   Future<TaskDomain> createDomain(
       String name, String description, String color,
-      {bool isShoppingList = false}) async {
+      {bool isShoppingList = false, String? icon, int? keepLandedCount}) async {
     final domain = await ApiService.createDomain(name, description, color,
-        isShoppingList: isShoppingList);
+        isShoppingList: isShoppingList,
+        icon: icon,
+        keepLandedCount: keepLandedCount);
     _domains.add(domain);
     _touch();
     return domain;
+  }
+
+  /// Aufbewahrung gelandeter Ausgaben je Wiederholungsserie.
+  Future<void> updateDomainKeepLanded(String domainId, int anzahl) async {
+    await ApiService.updateDomainKeepLanded(domainId, anzahl);
+    final idx = _domains.indexWhere((d) => d.id == domainId);
+    if (idx != -1) {
+      _domains[idx] = _domains[idx].copyWith(keepLandedCount: anzahl);
+    }
+    _touch();
+  }
+
+  /// Symbol setzen. `null` oder leerer Text entfernt es wieder.
+  Future<void> updateDomainIcon(String domainId, String? icon) async {
+    await ApiService.updateDomainIcon(domainId, icon);
+    final idx = _domains.indexWhere((d) => d.id == domainId);
+    if (idx != -1) {
+      final leer = icon == null || icon.trim().isEmpty;
+      _domains[idx] = _domains[idx]
+          .copyWith(icon: leer ? null : icon, clearIcon: leer);
+    }
+    _touch();
   }
 
   Future<void> renameDomain(String domainId, String name) async {

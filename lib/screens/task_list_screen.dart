@@ -16,6 +16,7 @@ import '../utils/field_limits.dart';
 import '../widgets/task_list_item.dart';
 import '../widgets/sphere_detail_content.dart';
 import '../widgets/reminder_picker_dialog.dart';
+import '../widgets/orbit_icon_picker.dart';
 import '../widgets/orbit_members_bar.dart';
 import '../widgets/simple_list_widgets.dart';
 import '../widgets/user_account_menu.dart';
@@ -640,7 +641,25 @@ class _TaskListScreenState extends State<TaskListScreen>
       onRename: () => _showEditOrbitDialog(domain),
       onDelete: () => _showDeleteOrbitDialog(domain),
       onInviteCoPilot: () => _showInviteCoPilotDialog(domain),
+      onChooseIcon: () => _showOrbitIconDialog(domain),
     );
+  }
+
+  /// Symbol des Orbits wählen oder entfernen.
+  Future<void> _showOrbitIconDialog(TaskDomain domain) async {
+    final auswahl = await showOrbitIconPicker(context, initial: domain.icon);
+    // null heißt abgebrochen – „Kein Symbol" liefert dagegen eine Auswahl mit
+    // leerem Zeichen und muss gespeichert werden.
+    if (auswahl == null || !mounted) return;
+    try {
+      await _taskService.updateDomainIcon(domain.id, auswahl.zeichen);
+      if (mounted) setState(() {});
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('Fehler: $e')));
+      }
+    }
   }
 
   Future<void> _showEditOrbitDialog(TaskDomain domain) async {
@@ -649,6 +668,7 @@ class _TaskListScreenState extends State<TaskListScreen>
       builder: (ctx) => _OrbitEditDialog(
         initialName: domain.name,
         initialDescription: domain.description,
+        initialKeepLandedCount: domain.keepLandedCount,
       ),
     );
     if (result == null || !mounted) return;
@@ -661,6 +681,10 @@ class _TaskListScreenState extends State<TaskListScreen>
       if (result.description != domain.description) {
         await _taskService.updateDomainDescription(
             domain.id, result.description);
+      }
+      if (result.keepLandedCount != domain.keepLandedCount) {
+        await _taskService.updateDomainKeepLanded(
+            domain.id, result.keepLandedCount);
       }
       if (mounted) setState(() {});
     } catch (e) {
@@ -1034,11 +1058,7 @@ class _TaskListScreenState extends State<TaskListScreen>
         // Detailansicht (analog zur Desktop-Version).
         ...domains.map(
           (d) => ListTile(
-            leading: Container(
-              width: 16,
-              height: 16,
-              decoration: BoxDecoration(color: d.color, shape: BoxShape.circle),
-            ),
+            leading: OrbitMarker.forDomain(d, size: 16),
             title: Text(d.name, style: const TextStyle(color: Colors.white)),
             trailing: const Icon(Icons.chevron_right, color: Colors.white70),
             onTap: () => _pushSphereList(d.id, d.name),
@@ -1120,12 +1140,7 @@ class _TaskListScreenState extends State<TaskListScreen>
               padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
               child: Row(
                 children: [
-                  Container(
-                    width: 14,
-                    height: 14,
-                    decoration:
-                        BoxDecoration(color: domain.color, shape: BoxShape.circle),
-                  ),
+                  OrbitMarker.forDomain(domain, size: 14),
                   const SizedBox(width: 10),
                   Expanded(
                     child: Text(
@@ -1154,6 +1169,18 @@ class _TaskListScreenState extends State<TaskListScreen>
                 onTap: () {
                   Navigator.of(ctx).pop();
                   _showInviteCoPilotDialog(domain);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.emoji_emotions_outlined,
+                    color: Colors.white70),
+                title: const Text('Symbol wählen',
+                    style: TextStyle(color: Colors.white)),
+                subtitle: const Text('Ersetzt den farbigen Punkt in der Liste',
+                    style: TextStyle(color: Colors.white38, fontSize: 12)),
+                onTap: () {
+                  Navigator.of(ctx).pop();
+                  _showOrbitIconDialog(domain);
                 },
               ),
               ListTile(
@@ -1491,7 +1518,8 @@ class _IconChip extends StatelessWidget {
 class _OrbitEdit {
   final String name;
   final String description;
-  const _OrbitEdit(this.name, this.description);
+  final int keepLandedCount;
+  const _OrbitEdit(this.name, this.description, this.keepLandedCount);
 }
 
 /// Dialog zum Bearbeiten eines Orbits.
@@ -1503,10 +1531,12 @@ class _OrbitEdit {
 class _OrbitEditDialog extends StatefulWidget {
   final String initialName;
   final String initialDescription;
+  final int initialKeepLandedCount;
 
   const _OrbitEditDialog({
     required this.initialName,
     required this.initialDescription,
+    required this.initialKeepLandedCount,
   });
 
   @override
@@ -1516,25 +1546,41 @@ class _OrbitEditDialog extends StatefulWidget {
 class _OrbitEditDialogState extends State<_OrbitEditDialog> {
   late final TextEditingController _nameCtrl;
   late final TextEditingController _descCtrl;
+  late final TextEditingController _keepCtrl;
+  String? _keepFehler;
 
   @override
   void initState() {
     super.initState();
     _nameCtrl = TextEditingController(text: widget.initialName);
     _descCtrl = TextEditingController(text: widget.initialDescription);
+    _keepCtrl =
+        TextEditingController(text: '${widget.initialKeepLandedCount}');
   }
 
   @override
   void dispose() {
     _nameCtrl.dispose();
     _descCtrl.dispose();
+    _keepCtrl.dispose();
     super.dispose();
   }
 
   void _submit() {
     final name = _nameCtrl.text.trim();
     if (name.isEmpty) return;
-    Navigator.pop(context, _OrbitEdit(name, _descCtrl.text.trim()));
+    final anzahl = int.tryParse(_keepCtrl.text.trim());
+    // Eine ungueltige Zahl darf nicht stillschweigend auf die Vorgabe
+    // zurueckfallen – sonst loescht der Server nach einer Regel, die niemand
+    // eingestellt hat.
+    if (anzahl == null ||
+        anzahl < kMinKeepLandedCount ||
+        anzahl > kMaxKeepLandedCount) {
+      setState(() => _keepFehler =
+          'Zahl zwischen $kMinKeepLandedCount und $kMaxKeepLandedCount');
+      return;
+    }
+    Navigator.pop(context, _OrbitEdit(name, _descCtrl.text.trim(), anzahl));
   }
 
   @override
@@ -1566,6 +1612,29 @@ class _OrbitEditDialogState extends State<_OrbitEditDialog> {
               border: OutlineInputBorder(),
             ),
           ),
+          const SizedBox(height: 12),
+          TextField(
+            controller: _keepCtrl,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: 'Erledigte Spheres aufheben',
+              suffixText: 'je Wiederholung',
+              errorText: _keepFehler,
+              border: const OutlineInputBorder(),
+            ),
+            onChanged: (_) {
+              if (_keepFehler != null) setState(() => _keepFehler = null);
+            },
+          ),
+          const SizedBox(height: 6),
+          Text(
+            'Ältere erledigte Ausgaben einer Wiederholung werden gelöscht. '
+            'Einmalige Spheres verschwinden ein Jahr nach dem Erledigen.',
+            style: Theme.of(context)
+                .textTheme
+                .bodySmall
+                ?.copyWith(color: Colors.grey[600]),
+          ),
         ],
       ),
       actions: [
@@ -1593,6 +1662,7 @@ class _OrbitTile extends StatefulWidget {
   final VoidCallback onRename;
   final VoidCallback onDelete;
   final VoidCallback onInviteCoPilot;
+  final VoidCallback onChooseIcon;
 
   const _OrbitTile({
     required this.domain,
@@ -1605,6 +1675,7 @@ class _OrbitTile extends StatefulWidget {
     required this.onRename,
     required this.onDelete,
     required this.onInviteCoPilot,
+    required this.onChooseIcon,
   });
 
   @override
@@ -1634,12 +1705,7 @@ class _OrbitTileState extends State<_OrbitTile> {
                   : Colors.transparent,
           child: ListTile(
             contentPadding: const EdgeInsets.only(left: 16, right: 4),
-            leading: Container(
-              width: 12,
-              height: 12,
-              decoration: BoxDecoration(
-                  color: widget.domain.color, shape: BoxShape.circle),
-            ),
+            leading: OrbitMarker.forDomain(widget.domain),
             title: Text(
               widget.domain.name,
               style: TextStyle(
@@ -1698,6 +1764,7 @@ class _OrbitTileState extends State<_OrbitTile> {
                       if (action == 'rename') widget.onRename();
                       if (action == 'delete') widget.onDelete();
                       if (action == 'invite') widget.onInviteCoPilot();
+                      if (action == 'icon') widget.onChooseIcon();
                     },
                     itemBuilder: (_) => [
                       const PopupMenuItem(
@@ -1706,6 +1773,16 @@ class _OrbitTileState extends State<_OrbitTile> {
                           Icon(Icons.person_add_outlined, color: Colors.white70, size: 18),
                           SizedBox(width: 8),
                           Text('Co-Pilot einladen', style: TextStyle(color: Colors.white)),
+                        ]),
+                      ),
+                      const PopupMenuItem(
+                        value: 'icon',
+                        child: Row(children: [
+                          Icon(Icons.emoji_emotions_outlined,
+                              color: Colors.white70, size: 18),
+                          SizedBox(width: 8),
+                          Text('Symbol wählen',
+                              style: TextStyle(color: Colors.white)),
                         ]),
                       ),
                       const PopupMenuItem(
