@@ -7,6 +7,8 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const rateLimit = require('express-rate-limit');
 const admin = require('firebase-admin');
+const multer = require('multer');
+const { BlobServiceClient } = require('@azure/storage-blob');
 require('dotenv').config();
 
 const app = express();
@@ -81,6 +83,132 @@ function rejectIfTooLong(res, label, value, max) {
     error: `${label} darf höchstens ${max} Zeichen lang sein (aktuell ${length}).`,
   });
   return true;
+}
+
+// -----------------------------------------------------------------------
+// Dateianhaenge (Azure Blob Storage)
+//
+// Die Dateien liegen NICHT in der Datenbank, sondern in einem eigenen
+// Speicherkonto. Azure SQL ist der teuerste Speicher im Aufbau und soll auf
+// den Basic-Tarif mit 2 GB Gesamtgroesse herunter - ein paar Dutzend
+// Screenshots wuerden das sprengen. Im Blob Storage kostet dasselbe Volumen
+// einen Bruchteil davon.
+//
+// Der Container wird NICHT automatisch angelegt: Er existiert bereits mit
+// bewusst gesetzten Rechten (kein anonymer Zugriff). Ein createIfNotExists
+// hier wuerde bei einer Fehlkonfiguration stillschweigend einen zweiten,
+// offeneren Container erzeugen.
+// -----------------------------------------------------------------------
+
+const ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024;   // 10 MB je Datei
+const ATTACHMENT_MAX_PER_ENTRY = 5;              // Anhaenge je Verlaufseintrag
+const ATTACHMENT_CONTAINER = process.env.AZURE_STORAGE_CONTAINER || 'sphere-attachments';
+
+// Aufbewahrungsfrist in Tagen. Ueber die Umgebungsvariable aenderbar, damit
+// sich die Frist ohne neue Auslieferung verschieben laesst.
+const ATTACHMENT_RETENTION_DAYS =
+  parseInt(process.env.ATTACHMENT_RETENTION_DAYS || '365', 10) || 365;
+
+// Verwaiste Anhaenge: hochgeladen, aber nie einem Verlaufseintrag zugeordnet -
+// jemand hat das Schreiben abgebrochen. Nach dieser Frist werden sie entsorgt.
+const ATTACHMENT_ORPHAN_HOURS = 24;
+
+let containerClient;
+
+async function getContainer() {
+  if (containerClient) return containerClient;
+  const conn = process.env.AZURE_STORAGE_CONNECTION_STRING;
+  if (!conn) {
+    throw new Error('AZURE_STORAGE_CONNECTION_STRING fehlt – Dateianhaenge sind nicht eingerichtet');
+  }
+  containerClient = BlobServiceClient
+    .fromConnectionString(conn)
+    .getContainerClient(ATTACHMENT_CONTAINER);
+  return containerClient;
+}
+
+// Dateien landen im Arbeitsspeicher statt auf der Platte: Der App Service hat
+// kein verlaessliches Schreibverzeichnis, und bei 10 MB Obergrenze ist das
+// unkritisch.
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: ATTACHMENT_MAX_BYTES, files: 1 },
+});
+
+// Erkennt Bilder am Dateiinhalt statt am Wort des Clients. Ohne diese Pruefung
+// koennte eine beliebige Datei als "image/png" deklariert werden und die App
+// versuchte, sie als Bild darzustellen.
+function sniffImageType(buffer) {
+  if (!buffer || buffer.length < 12) return null;
+  if (buffer[0] === 0x89 && buffer[1] === 0x50 && buffer[2] === 0x4e && buffer[3] === 0x47) return 'image/png';
+  if (buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[2] === 0xff) return 'image/jpeg';
+  if (buffer[0] === 0x47 && buffer[1] === 0x49 && buffer[2] === 0x46) return 'image/gif';
+  if (buffer[0] === 0x42 && buffer[1] === 0x4d) return 'image/bmp';
+  if (buffer.toString('ascii', 0, 4) === 'RIFF' && buffer.toString('ascii', 8, 12) === 'WEBP') return 'image/webp';
+  return null;
+}
+
+// Endung fuer den Speichernamen - rein kosmetisch, damit man im Azure-Portal
+// erkennt, was man vor sich hat. Alles ausser Buchstaben und Ziffern fliegt
+// raus; der echte Dateiname wird NIE als Speichername verwendet.
+function safeExtension(fileName) {
+  const dot = String(fileName || '').lastIndexOf('.');
+  if (dot < 0) return '';
+  const ext = fileName.slice(dot + 1).replace(/[^a-zA-Z0-9]/g, '').toLowerCase();
+  return ext ? `.${ext.slice(0, 10)}` : '';
+}
+
+// Prueft, ob der angemeldete Nutzer auf die Sphere zugreifen darf, und liefert
+// dabei gleich deren Orbit zurueck. Dieselbe Regel wie bei den
+// Verlaufseintraegen: aktive Mitgliedschaft im Orbit der Sphere.
+async function loadTaskForUser(p, taskId, userId) {
+  const taskResult = await p.request()
+    .input('id', sql.NVarChar, taskId)
+    .query('SELECT id, domainId, title FROM Task WHERE id = @id');
+  const task = taskResult.recordset[0];
+  if (!task) return { task: null, allowed: false };
+
+  const access = await p.request()
+    .input('orbitId', sql.NVarChar, task.domainId)
+    .input('userId',  sql.NVarChar, userId)
+    .query(`SELECT id FROM OrbitMember
+            WHERE orbitId = @orbitId AND userId = @userId AND status = 'active'`);
+  return { task, allowed: access.recordset.length > 0 };
+}
+
+// Loescht die Dateien der genannten Anhaenge im Blob Storage. Die Zeilen in der
+// Datenbank bleiben unberuehrt - was damit geschieht, entscheidet der Aufrufer:
+// Beim Loeschen einer Sphere verschwinden sie mit, beim Ablauf der Frist
+// bleiben sie als Vermerk stehen.
+async function deleteBlobs(rows) {
+  if (rows.length === 0) return;
+  let container;
+  try {
+    container = await getContainer();
+  } catch (err) {
+    console.error('Blob-Loeschen uebersprungen:', err.message);
+    return;
+  }
+  for (const row of rows) {
+    if (!row.blobName) continue;
+    try {
+      await container.deleteBlobIfExists(row.blobName);
+    } catch (err) {
+      console.error(`Blob ${row.blobName} nicht loeschbar:`, err.message);
+    }
+  }
+}
+
+// Raeumt alle Anhaenge der genannten Spheres ab - Dateien und Datenbankzeilen.
+// Muss VOR dem Loeschen der Sphere laufen, sonst blockiert der Fremdschluessel.
+async function purgeAttachmentsForTask(p, taskId) {
+  const rows = await p.request()
+    .input('taskId', sql.NVarChar, taskId)
+    .query('SELECT blobName FROM TaskAttachment WHERE taskId = @taskId');
+  await deleteBlobs(rows.recordset);
+  await p.request()
+    .input('taskId', sql.NVarChar, taskId)
+    .query('DELETE FROM TaskAttachment WHERE taskId = @taskId');
 }
 
 // -----------------------------------------------------------------------
@@ -1450,6 +1578,7 @@ app.delete('/domains/:id', requireAuth, requirePilot, async (req, res) => {
       await p.request()
         .input('prevId', sql.NVarChar, task.id)
         .query('UPDATE Task SET previousTaskId = NULL WHERE previousTaskId = @prevId');
+      await purgeAttachmentsForTask(p, task.id);
       await p.request()
         .input('taskId', sql.NVarChar, task.id)
         .query('DELETE FROM TaskLogEntry WHERE taskId = @taskId');
@@ -2129,6 +2258,7 @@ app.delete('/tasks/:id', requireAuth, async (req, res) => {
     await p.request()
       .input('id', sql.NVarChar, id)
       .query('UPDATE Task SET previousTaskId = NULL WHERE previousTaskId = @id');
+    await purgeAttachmentsForTask(p, id);
     await p.request()
       .input('id', sql.NVarChar, id)
       .query('DELETE FROM TaskLogEntry WHERE taskId = @id');
@@ -2174,6 +2304,21 @@ app.get('/logs/:taskId', requireAuth, async (req, res) => {
 app.post('/logs', requireAuth, async (req, res) => {
   const { taskId, text } = req.body;
   if (rejectIfTooLong(res, 'Der Eintrag', text, FIELD_LIMITS.logText)) return;
+
+  // Anhaenge sind vor dem Eintrag hochgeladen worden und warten mit
+  // logEntryId = NULL darauf, zugeordnet zu werden.
+  const attachmentIds = Array.isArray(req.body.attachmentIds) ? req.body.attachmentIds : [];
+  if (attachmentIds.length > ATTACHMENT_MAX_PER_ENTRY) {
+    return res.status(400).json({
+      error: `Höchstens ${ATTACHMENT_MAX_PER_ENTRY} Anhänge pro Eintrag.`,
+    });
+  }
+  // Ein Eintrag ganz ohne Inhalt ergibt keinen Sinn – ein Bild allein aber sehr
+  // wohl, deshalb reicht eines von beidem.
+  if (!String(text || '').trim() && attachmentIds.length === 0) {
+    return res.status(400).json({ error: 'Der Eintrag braucht einen Text oder einen Anhang.' });
+  }
+
   const id  = uuidv4();
   const now = new Date();
   try {
@@ -2205,12 +2350,34 @@ app.post('/logs', requireAuth, async (req, res) => {
               OUTPUT INSERTED.*
               VALUES (@id, @taskId, @user, @text, @timestamp)`);
 
+    // Anhaenge dem frisch angelegten Eintrag zuordnen. Die Bedingungen sind
+    // bewusst eng: nur eigene, noch nicht zugeordnete Anhaenge derselben
+    // Sphere. Damit laesst sich ueber untergeschobene IDs nichts an fremde
+    // Eintraege haengen.
+    let linkedAttachments = 0;
+    if (attachmentIds.length > 0) {
+      const request = p.request()
+        .input('logEntryId', sql.NVarChar, id)
+        .input('taskId',     sql.NVarChar, taskId)
+        .input('userId',     sql.NVarChar, req.user.userId);
+      const placeholders = attachmentIds.map((_, i) => `@att${i}`).join(',');
+      attachmentIds.forEach((attId, i) => request.input(`att${i}`, sql.NVarChar, String(attId)));
+      const linked = await request.query(
+        `UPDATE TaskAttachment SET logEntryId = @logEntryId
+         WHERE id IN (${placeholders})
+           AND taskId = @taskId
+           AND uploadedBy = @userId
+           AND logEntryId IS NULL`
+      );
+      linkedAttachments = linked.rowsAffected[0];
+    }
+
     const update = await p.request()
       .input('taskId', sql.NVarChar, taskId)
       .query("UPDATE Task SET status = 'inProgress' WHERE id = @taskId AND status = 'open'");
     const taskStatus = update.rowsAffected[0] > 0 ? 'inProgress' : null;
 
-    res.json({ ...result.recordset[0], user: userLabel, taskStatus });
+    res.json({ ...result.recordset[0], user: userLabel, taskStatus, linkedAttachments });
 
     const orbitId = taskResult.recordset[0].domainId;
     const titleRow = await p.request()
@@ -2223,6 +2390,209 @@ app.post('/logs', requireAuth, async (req, res) => {
       type: 'log_added', sphereId: taskId, sphereTitle: tr.title, orbitName: tr.orbitName,
       body: `${userLabel} hat einen Eintrag zu „${tr.title || 'einer Sphere'}" hinzugefügt.`,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// -----------------------------------------------------------------------
+// Dateianhaenge
+//
+// Ablauf beim Schreiben: Erst wird jede Datei einzeln hochgeladen und liegt
+// mit logEntryId = NULL bereit, dann ordnet POST /logs sie dem neuen Eintrag
+// zu. Andersherum ginge es nicht - vor dem Absenden existiert der Eintrag noch
+// nicht, an den man sie haengen koennte. Abgebrochene Uploads raeumt der
+// Scheduler nach 24 Stunden ab.
+// -----------------------------------------------------------------------
+
+app.post('/tasks/:taskId/attachments', requireAuth, upload.single('file'), async (req, res) => {
+  const { taskId } = req.params;
+  if (!req.file) return res.status(400).json({ error: 'Keine Datei empfangen' });
+
+  try {
+    const p = await getPool();
+    const { task, allowed } = await loadTaskForUser(p, taskId, req.user.userId);
+    if (!task) return res.status(404).json({ error: 'Sphere nicht gefunden' });
+    if (!allowed) return res.status(403).json({ error: 'Kein Zugriff' });
+
+    // Wer das Schreiben mehrfach abbricht, soll nicht unbegrenzt Dateien
+    // ansammeln koennen. Gezaehlt werden nur die eigenen, noch offenen.
+    const pending = await p.request()
+      .input('taskId', sql.NVarChar, taskId)
+      .input('userId', sql.NVarChar, req.user.userId)
+      .query(`SELECT COUNT(*) AS anzahl FROM TaskAttachment
+              WHERE taskId = @taskId AND uploadedBy = @userId AND logEntryId IS NULL`);
+    if (pending.recordset[0].anzahl >= ATTACHMENT_MAX_PER_ENTRY) {
+      return res.status(400).json({
+        error: `Höchstens ${ATTACHMENT_MAX_PER_ENTRY} Anhänge pro Eintrag.`,
+      });
+    }
+
+    // Der vom Client gemeldete Typ ist nur ein Hinweis. Als Bild gilt eine
+    // Datei erst, wenn ihr Inhalt das hergibt.
+    const sniffed = sniffImageType(req.file.buffer);
+    const contentType = sniffed
+      || (req.file.mimetype || 'application/octet-stream').slice(0, 150);
+    const fileName = (req.file.originalname || 'datei').slice(0, 255);
+
+    const id = uuidv4();
+    const blobName = `${taskId}/${id}${safeExtension(fileName)}`;
+
+    const container = await getContainer();
+    await container.getBlockBlobClient(blobName).uploadData(req.file.buffer, {
+      blobHTTPHeaders: {
+        blobContentType: contentType,
+        // Auch wenn jemand direkt an die Datei kaeme: nichts im Browser
+        // ausfuehren oder darstellen lassen.
+        blobContentDisposition: `attachment; filename="${fileName.replace(/"/g, '')}"`,
+      },
+    });
+
+    const userRow = await p.request()
+      .input('userId', sql.NVarChar, req.user.userId)
+      .query('SELECT displayName, email FROM AppUser WHERE id = @userId');
+    const u = userRow.recordset[0] || {};
+    const uploaderLabel = (u.displayName && u.displayName.trim()) || u.email || req.user.email;
+
+    // Die Datei liegt jetzt im Speicher, die Zeile dazu fehlt noch. Scheitert
+    // sie, muss die Datei wieder weg: Ein Blob ohne Datenbankzeile findet
+    // hinterher niemand mehr – auch der Aufraeumlauf nicht, der ueber die
+    // Zeilen geht – und er wuerde dauerhaft Speicher kosten.
+    let inserted;
+    try {
+      inserted = await p.request()
+        .input('id',             sql.NVarChar, id)
+        .input('taskId',         sql.NVarChar, taskId)
+        .input('blobName',       sql.NVarChar, blobName)
+        .input('fileName',       sql.NVarChar, fileName)
+        .input('contentType',    sql.NVarChar, contentType)
+        .input('sizeBytes',      sql.BigInt,   req.file.size)
+        .input('isImage',        sql.Bit,      sniffed ? 1 : 0)
+        .input('uploadedBy',     sql.NVarChar, req.user.userId)
+        .input('uploadedByName', sql.NVarChar, uploaderLabel)
+        .query(`INSERT INTO TaskAttachment
+                  (id, taskId, blobName, fileName, contentType, sizeBytes, isImage,
+                   uploadedBy, uploadedByName)
+                OUTPUT INSERTED.id, INSERTED.taskId, INSERTED.logEntryId, INSERTED.fileName,
+                       INSERTED.contentType, INSERTED.sizeBytes, INSERTED.isImage,
+                       INSERTED.uploadedBy, INSERTED.uploadedByName, INSERTED.createdAt,
+                       INSERTED.blobDeletedAt
+                VALUES (@id, @taskId, @blobName, @fileName, @contentType, @sizeBytes, @isImage,
+                        @uploadedBy, @uploadedByName)`);
+    } catch (dbErr) {
+      await deleteBlobs([{ blobName }]);
+      throw dbErr;
+    }
+
+    res.json(inserted.recordset[0]);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/tasks/:taskId/attachments', requireAuth, async (req, res) => {
+  const { taskId } = req.params;
+  try {
+    const p = await getPool();
+    const { task, allowed } = await loadTaskForUser(p, taskId, req.user.userId);
+    if (!task) return res.status(404).json({ error: 'Sphere nicht gefunden' });
+    if (!allowed) return res.status(403).json({ error: 'Kein Zugriff' });
+
+    // blobName bleibt bewusst drin: Der Speicherort geht die App nichts an,
+    // sie spricht Anhaenge ausschliesslich ueber ihre id an.
+    const result = await p.request()
+      .input('taskId', sql.NVarChar, taskId)
+      .query(`SELECT id, taskId, logEntryId, fileName, contentType, sizeBytes,
+                     isImage, uploadedBy, uploadedByName, createdAt, blobDeletedAt
+              FROM TaskAttachment
+              WHERE taskId = @taskId
+              ORDER BY createdAt ASC`);
+    res.json(result.recordset);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Liefert die Datei selbst. Laeuft bewusst ueber das Backend statt ueber einen
+// direkten Link in den Speicher: So gilt fuer jede Datei dieselbe
+// Zugriffspruefung wie fuer die Sphere, und es gibt keine Adresse, die nach
+// dem Weiterleiten noch funktioniert.
+app.get('/attachments/:id/content', requireAuth, async (req, res) => {
+  try {
+    const p = await getPool();
+    const row = await p.request()
+      .input('id', sql.NVarChar, req.params.id)
+      .query('SELECT * FROM TaskAttachment WHERE id = @id');
+    const att = row.recordset[0];
+    if (!att) return res.status(404).json({ error: 'Anhang nicht gefunden' });
+
+    const { allowed } = await loadTaskForUser(p, att.taskId, req.user.userId);
+    if (!allowed) return res.status(403).json({ error: 'Kein Zugriff' });
+
+    if (att.blobDeletedAt) {
+      return res.status(410).json({
+        error: `Diese Datei wurde nach ${ATTACHMENT_RETENTION_DAYS} Tagen entfernt.`,
+      });
+    }
+
+    const container = await getContainer();
+    const download = await container.getBlockBlobClient(att.blobName).download();
+
+    res.setHeader('Content-Type', att.contentType || 'application/octet-stream');
+    if (att.sizeBytes) res.setHeader('Content-Length', String(att.sizeBytes));
+    // Bilder zeigt die App direkt an, alles andere wird zum Speichern
+    // angeboten. Der Inhalt einer id aendert sich nie, deshalb darf das Geraet
+    // ihn behalten – privat, damit kein Zwischenspeicher unterwegs mitliest.
+    res.setHeader('Content-Disposition',
+      `${att.isImage ? 'inline' : 'attachment'}; filename="${String(att.fileName).replace(/"/g, '')}"`);
+    res.setHeader('Cache-Control', 'private, max-age=86400');
+
+    download.readableStreamBody.on('error', err => {
+      console.error(`Anhang ${att.id} konnte nicht gelesen werden:`, err.message);
+      res.destroy();
+    });
+    download.readableStreamBody.pipe(res);
+  } catch (err) {
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+  }
+});
+
+// Loeschen darf, wer die Datei hochgeladen hat - man laedt sich schnell einmal
+// das falsche Bild hoch - und zusaetzlich der Pilot des Orbits.
+app.delete('/attachments/:id', requireAuth, async (req, res) => {
+  try {
+    const p = await getPool();
+    const row = await p.request()
+      .input('id', sql.NVarChar, req.params.id)
+      .query('SELECT * FROM TaskAttachment WHERE id = @id');
+    const att = row.recordset[0];
+    if (!att) return res.status(404).json({ error: 'Anhang nicht gefunden' });
+
+    const { task, allowed } = await loadTaskForUser(p, att.taskId, req.user.userId);
+    if (!task || !allowed) return res.status(403).json({ error: 'Kein Zugriff' });
+
+    let mayDelete = att.uploadedBy === req.user.userId;
+    if (!mayDelete) {
+      const pilot = await p.request()
+        .input('orbitId', sql.NVarChar, task.domainId)
+        .input('userId',  sql.NVarChar, req.user.userId)
+        .query(`SELECT id FROM OrbitMember
+                WHERE orbitId = @orbitId AND userId = @userId
+                  AND role = 'pilot' AND status = 'active'`);
+      mayDelete = pilot.recordset.length > 0;
+    }
+    if (!mayDelete) {
+      return res.status(403).json({
+        error: 'Nur wer die Datei hochgeladen hat oder der Pilot darf sie löschen',
+      });
+    }
+
+    await deleteBlobs([att]);
+    await p.request()
+      .input('id', sql.NVarChar, att.id)
+      .query('DELETE FROM TaskAttachment WHERE id = @id');
+
+    res.json({ success: true });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
@@ -2371,6 +2741,10 @@ app.delete('/events', requireAuth, async (req, res) => {
 // Scheduler
 // -----------------------------------------------------------------------
 
+// Zeitpunkt des letzten Anhang-Aufraeumlaufs. Der Scheduler tickt alle fuenf
+// Minuten, das Aufraeumen genuegt einmal am Tag.
+let lastAttachmentSweep = null;
+
 async function runScheduler() {
   const now = new Date();
   console.log(`Scheduler: run at ${now.toISOString()}`);
@@ -2453,7 +2827,9 @@ async function runScheduler() {
 
     for (const row of stale.recordset) {
       try {
-        // Verlaufseintraege zuerst – der Fremdschluessel verhindert sonst das Loeschen.
+        // Anhaenge und Verlaufseintraege zuerst – die Fremdschluessel
+        // verhindern sonst das Loeschen.
+        await purgeAttachmentsForTask(p, row.id);
         await p.request()
           .input('taskId', sql.NVarChar, row.id)
           .query('DELETE FROM TaskLogEntry WHERE taskId = @taskId');
@@ -2467,10 +2843,84 @@ async function runScheduler() {
     if (stale.recordset.length > 0) {
       console.log(`Scheduler: ${stale.recordset.length} erledigte Listenposition(en) geloescht`);
     }
+
+    // 4. Dateianhaenge aufraeumen. Laeuft nur einmal taeglich statt bei jedem
+    //    Durchlauf – die Frist ist ein Jahr, da waere ein Fuenf-Minuten-Takt
+    //    reine Last auf Datenbank und Speicher.
+    if (!lastAttachmentSweep || now.getTime() - lastAttachmentSweep >= 24 * 60 * 60 * 1000) {
+      lastAttachmentSweep = now.getTime();
+      await sweepAttachments(p, now);
+    }
   } catch (err) {
     console.error('Scheduler error:', err.message);
   }
 }
+
+// Zwei Aufgaben in einem Durchlauf:
+//
+// a) Abgelaufene Dateien: Nach ATTACHMENT_RETENTION_DAYS wird die Datei im
+//    Speicher geloescht, die Zeile in der Datenbank aber BEHALTEN und nur mit
+//    blobDeletedAt versehen. So steht im Verlauf weiterhin der Dateiname mit
+//    dem Hinweis, dass er nach einem Jahr entfernt wurde – statt einer
+//    unerklaerlichen Luecke, bei der niemand mehr weiss, ob da je etwas war.
+//
+// b) Verwaiste Uploads: hochgeladen, aber nie einem Eintrag zugeordnet – jemand
+//    hat das Schreiben abgebrochen. Die verschwinden vollstaendig, denn zu
+//    ihnen gibt es keinen Eintrag, an dem ein Vermerk stehen koennte.
+async function sweepAttachments(p, now) {
+  try {
+    const expiryCutoff = new Date(now.getTime() - ATTACHMENT_RETENTION_DAYS * 24 * 60 * 60 * 1000);
+    const expired = await p.request()
+      .input('cutoff', sql.DateTime2, expiryCutoff)
+      .query(`SELECT id, blobName FROM TaskAttachment
+              WHERE blobDeletedAt IS NULL AND createdAt <= @cutoff`);
+
+    if (expired.recordset.length > 0) {
+      await deleteBlobs(expired.recordset);
+      for (const row of expired.recordset) {
+        await p.request()
+          .input('id',  sql.NVarChar,  row.id)
+          .input('now', sql.DateTime2, now)
+          .query('UPDATE TaskAttachment SET blobDeletedAt = @now WHERE id = @id');
+      }
+      console.log(`Scheduler: ${expired.recordset.length} abgelaufene Anhaenge entfernt`);
+    }
+
+    const orphanCutoff = new Date(now.getTime() - ATTACHMENT_ORPHAN_HOURS * 60 * 60 * 1000);
+    const orphans = await p.request()
+      .input('cutoff', sql.DateTime2, orphanCutoff)
+      .query(`SELECT id, blobName FROM TaskAttachment
+              WHERE logEntryId IS NULL AND blobDeletedAt IS NULL AND createdAt <= @cutoff`);
+
+    if (orphans.recordset.length > 0) {
+      await deleteBlobs(orphans.recordset);
+      for (const row of orphans.recordset) {
+        await p.request()
+          .input('id', sql.NVarChar, row.id)
+          .query('DELETE FROM TaskAttachment WHERE id = @id');
+      }
+      console.log(`Scheduler: ${orphans.recordset.length} verwaiste Uploads entsorgt`);
+    }
+  } catch (err) {
+    console.error('Anhang-Aufraeumlauf fehlgeschlagen:', err.message);
+  }
+}
+
+// Multer meldet eine zu grosse Datei als Fehler, nicht als Antwort. Ohne diese
+// Behandlung bekaeme die App einen nackten 500er ohne verwertbaren Text.
+app.use((err, req, res, next) => {
+  if (err instanceof multer.MulterError) {
+    const message = err.code === 'LIMIT_FILE_SIZE'
+      ? `Die Datei ist zu groß. Erlaubt sind höchstens ${Math.round(ATTACHMENT_MAX_BYTES / 1024 / 1024)} MB.`
+      : 'Die Datei konnte nicht entgegengenommen werden.';
+    return res.status(400).json({ error: message });
+  }
+  if (err) {
+    console.error('Unbehandelter Fehler:', err.message);
+    return res.status(500).json({ error: err.message });
+  }
+  next();
+});
 
 setInterval(runScheduler, 5 * 60 * 1000);
 

@@ -122,6 +122,52 @@ CREATE TABLE TaskLogEntry (
 
 
 -- ----------------------------------------------------------------------------
+-- TaskAttachment - Dateianhaenge einer Sphere (Bilder und beliebige Dateien)
+--
+-- Die Dateien selbst liegen im Azure Blob Storage (Container
+-- "sphere-attachments"), hier stehen nur die Metadaten. Binaerdaten in Azure
+-- SQL waeren der teuerste denkbare Speicherplatz und wuerden den Basic-Tarif
+-- (2 GB) sprengen.
+--
+-- blobName ist eine zufaellige ID, NICHT der Dateiname des Nutzers - der steht
+-- nur in fileName und dient ausschliesslich der Anzeige.
+--
+-- logEntryId bewusst OHNE Fremdschluessel (wie assignedToMemberId an Task):
+-- Der Anhang wird hochgeladen, bevor der Verlaufseintrag existiert, und erst
+-- danach zugeordnet. Der Bezug ueber taskId ist der verbindliche - dessen
+-- Fremdschluessel erzwingt, dass beim Loeschen einer Sphere die Anhaenge
+-- zuerst weg muessen. Lieber ein lauter Fehler als Dateien, die niemand mehr
+-- referenziert und fuer die ewig Speicher bezahlt wird.
+--
+-- blobDeletedAt: Nach Ablauf der Aufbewahrungsfrist
+-- (ATTACHMENT_RETENTION_DAYS, Standard 365) wird die Datei im Blob Storage
+-- geloescht, die Zeile hier aber behalten. Der Verlauf zeigt dann
+-- "screenshot.png - nach einem Jahr entfernt" statt einer unerklaerlichen
+-- Luecke.
+-- ----------------------------------------------------------------------------
+CREATE TABLE TaskAttachment (
+    id             NVARCHAR(100)  NOT NULL PRIMARY KEY,
+    taskId         NVARCHAR(100)  NOT NULL,
+    logEntryId     NVARCHAR(100)  NULL,
+    blobName       NVARCHAR(200)  NOT NULL,
+    fileName       NVARCHAR(255)  NOT NULL,
+    contentType    NVARCHAR(150)  NOT NULL,
+    sizeBytes      BIGINT         NOT NULL,
+    isImage        BIT            NOT NULL DEFAULT 0,
+    uploadedBy     NVARCHAR(100)  NULL,
+    uploadedByName NVARCHAR(200)  NULL,
+    createdAt      DATETIME2      NOT NULL DEFAULT GETUTCDATE(),
+    blobDeletedAt  DATETIME2      NULL,
+    CONSTRAINT FK_TaskAttachment_Task FOREIGN KEY (taskId) REFERENCES Task(id)
+);
+
+CREATE INDEX IX_TaskAttachment_Task ON TaskAttachment (taskId);
+
+CREATE INDEX IX_TaskAttachment_Cleanup ON TaskAttachment (createdAt)
+    WHERE blobDeletedAt IS NULL;
+
+
+-- ----------------------------------------------------------------------------
 -- DeviceToken - registrierte Push-Tokens je Nutzer
 -- Ein Nutzer kann mehrere Geraete haben; token ist global eindeutig.
 -- platform: 'android' | 'windows' | 'ios'
