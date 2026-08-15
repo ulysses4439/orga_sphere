@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:http/http.dart' as http;
+import 'package:http_parser/http_parser.dart' show MediaType;
 import '../models/models.dart';
 import 'auth_service.dart';
 
@@ -249,6 +250,41 @@ class ApiService {
         .toList();
   }
 
+  /// Lädt eine Datei zu einer Sphere hoch.
+  ///
+  /// Der Anhang liegt danach beim Server, gehört aber noch zu keinem
+  /// Verlaufseintrag – den gibt es zu diesem Zeitpunkt ja noch nicht. Die
+  /// Zuordnung macht [addLogEntry] beim Absenden über `attachmentIds`.
+  static Future<SphereAttachment> uploadAttachment(
+    String taskId, {
+    required List<int> bytes,
+    required String fileName,
+    required String contentType,
+  }) async {
+    final request = http.MultipartRequest(
+      'POST',
+      Uri.parse('$_baseUrl/tasks/$taskId/attachments'),
+    );
+    // Content-Type muss hier weg: Bei einer mehrteiligen Übertragung setzt ihn
+    // das Paket selbst, samt der Trennmarke zwischen den Teilen. Ein von Hand
+    // gesetztes application/json würde die Übertragung unlesbar machen.
+    request.headers.addAll(
+      Map<String, String>.from(_headers)..remove('Content-Type'),
+    );
+    request.files.add(http.MultipartFile.fromBytes(
+      'file',
+      bytes,
+      filename: fileName,
+      contentType: MediaType.parse(contentType),
+    ));
+
+    final streamed = await request.send();
+    final response = await http.Response.fromStream(streamed);
+    _checkStatus(response);
+    return SphereAttachment.fromJson(
+        jsonDecode(response.body) as Map<String, dynamic>);
+  }
+
   static Future<void> deleteAttachment(String attachmentId) async {
     final response = await http.delete(
       Uri.parse('$_baseUrl/attachments/$attachmentId'),
@@ -411,8 +447,16 @@ class ApiService {
   }
 
   static Future<({TaskLogEntry entry, String? newTaskStatus})> addLogEntry(
-      String taskId, String text) async {
-    final response = await _post('/logs', {'taskId': taskId, 'text': text});
+      String taskId, String text,
+      {List<String> attachmentIds = const []}) async {
+    final response = await _post('/logs', {
+      'taskId': taskId,
+      'text': text,
+      // Bereits hochgeladene Anhänge, die dieser Eintrag übernehmen soll. Der
+      // Server prüft dabei, dass es die eigenen und noch freien Anhänge
+      // derselben Sphere sind.
+      if (attachmentIds.isNotEmpty) 'attachmentIds': attachmentIds,
+    });
     _checkStatus(response);
     final body = jsonDecode(response.body) as Map<String, dynamic>;
     return (

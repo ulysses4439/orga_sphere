@@ -314,8 +314,10 @@ class TaskService extends ChangeNotifier {
     _touch();
   }
 
-  Future<void> addLogEntry(String taskId, String text) async {
-    final result = await ApiService.addLogEntry(taskId, text);
+  Future<void> addLogEntry(String taskId, String text,
+      {List<String> attachmentIds = const []}) async {
+    final result =
+        await ApiService.addLogEntry(taskId, text, attachmentIds: attachmentIds);
     final task = getTaskById(taskId);
     task?.addLogEntry(result.entry);
     if (result.newTaskStatus != null) {

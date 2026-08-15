@@ -33,6 +33,13 @@ const int kLogEntryMaxLength = 1000;
 /// AppUser.displayName
 const int kDisplayNameMaxLength = 200;
 
+/// Anhaenge je Verlaufseintrag. Spiegelt ATTACHMENT_MAX_PER_ENTRY im Backend –
+/// dort wird die Grenze noch einmal geprueft.
+const int kMaxAttachmentsPerEntry = 5;
+
+/// Groesse einer einzelnen Datei. Spiegelt ATTACHMENT_MAX_BYTES im Backend.
+const int kMaxAttachmentBytes = 10 * 1024 * 1024;
+
 /// Ab welchem Fuellstand [nearLimitCounter] den Zaehler einblendet.
 const double _kCounterThreshold = 0.8;
 

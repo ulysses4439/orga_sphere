@@ -1,5 +1,13 @@
+import 'dart:io' show File;
+
+import 'package:file_selector/file_selector.dart';
+import 'package:flutter/foundation.dart'
+    show compute, defaultTargetPlatform, TargetPlatform;
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:pasteboard/pasteboard.dart';
 import '../models/models.dart';
+import '../utils/attachment_upload.dart';
 import '../services/api_service.dart';
 import '../services/auth_service.dart';
 import '../services/notification_center.dart';
@@ -54,6 +62,12 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
   List<SphereAttachment> _attachments = [];
   bool _attachmentsLoaded = false;
 
+  /// Bereits hochgeladene Anhänge, die auf das Absenden dieses Eintrags warten.
+  /// Sie liegen schon beim Server, gehören aber noch zu keinem Eintrag – der
+  /// existiert ja noch nicht.
+  List<SphereAttachment> _pendingUploads = [];
+  bool _isUploading = false;
+
   @override
   void initState() {
     super.initState();
@@ -100,6 +114,150 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
   List<SphereAttachment> _attachmentsOf(String logEntryId) => _attachmentsLoaded
       ? _attachments.where((a) => a.logEntryId == logEntryId).toList()
       : const [];
+
+  /// Dateien auswählen und sofort hochladen.
+  ///
+  /// Hochgeladen wird gleich beim Auswählen, nicht erst beim Absenden: So sieht
+  /// man sofort, ob die Datei durchgeht, statt es nach dem Verfassen eines
+  /// langen Textes erst zu erfahren.
+  Future<void> _pickAndUploadFiles() async {
+    final frei = kMaxAttachmentsPerEntry - _pendingUploads.length;
+    if (frei <= 0) {
+      _zeigeHinweis('Mehr als $kMaxAttachmentsPerEntry Anhänge pro Eintrag '
+          'sind nicht möglich.');
+      return;
+    }
+
+    final List<XFile> auswahl;
+    try {
+      auswahl = await openFiles();
+    } catch (e) {
+      _zeigeHinweis('Dateiauswahl fehlgeschlagen: $e');
+      return;
+    }
+    if (auswahl.isEmpty || !mounted) return;
+
+    final zuViele = auswahl.length > frei;
+    final dateien = auswahl.take(frei).toList();
+
+    setState(() => _isUploading = true);
+    var fehler = 0;
+    for (final datei in dateien) {
+      final ok = await _uploadOne(await datei.readAsBytes(), datei.name);
+      if (!ok) fehler++;
+      if (!mounted) return;
+    }
+    setState(() => _isUploading = false);
+
+    if (zuViele && fehler == 0) {
+      _zeigeHinweis('Es passen nur noch $frei Anhänge in diesen Eintrag – der '
+          'Rest wurde nicht übernommen.');
+    }
+  }
+
+  /// Ob die Zwischenablage Bilder liefern kann. Nur auf dem Rechner – auf dem
+  /// Handy führt der Weg über die Galerie.
+  static bool get _zwischenablageMoeglich =>
+      defaultTargetPlatform == TargetPlatform.windows ||
+      defaultTargetPlatform == TargetPlatform.macOS ||
+      defaultTargetPlatform == TargetPlatform.linux;
+
+  /// Bild oder Datei aus der Zwischenablage anhängen.
+  ///
+  /// Der eigentliche Grund für das ganze Vorhaben: Ein Tester macht einen
+  /// Screenshot und hat ihn in der Zwischenablage. Müsste er ihn erst als Datei
+  /// speichern und wieder heraussuchen, benutzt er nach zwei Wochen wieder
+  /// WhatsApp.
+  Future<void> _pasteFromClipboard() async {
+    if (_isUploading) return;
+    if (_pendingUploads.length >= kMaxAttachmentsPerEntry) {
+      _zeigeHinweis('Mehr als $kMaxAttachmentsPerEntry Anhänge pro Eintrag '
+          'sind nicht möglich.');
+      return;
+    }
+
+    setState(() => _isUploading = true);
+    try {
+      final bild = await Pasteboard.image;
+      if (bild != null && bild.isNotEmpty) {
+        final stempel = DateTime.now();
+        final name = 'Screenshot_${stempel.year}'
+            '${stempel.month.toString().padLeft(2, '0')}'
+            '${stempel.day.toString().padLeft(2, '0')}_'
+            '${stempel.hour.toString().padLeft(2, '0')}'
+            '${stempel.minute.toString().padLeft(2, '0')}'
+            '${stempel.second.toString().padLeft(2, '0')}.png';
+        await _uploadOne(bild, name);
+        return;
+      }
+
+      // Kein Bild, aber vielleicht im Explorer kopierte Dateien.
+      final pfade = await Pasteboard.files();
+      if (pfade.isEmpty) {
+        _zeigeHinweis('In der Zwischenablage ist kein Bild und keine Datei.');
+        return;
+      }
+      final frei = kMaxAttachmentsPerEntry - _pendingUploads.length;
+      for (final pfad in pfade.take(frei)) {
+        final datei = File(pfad);
+        if (!await datei.exists()) continue;
+        await _uploadOne(await datei.readAsBytes(), pfad.split(RegExp(r'[\\/]')).last);
+        if (!mounted) return;
+      }
+    } catch (e) {
+      _zeigeHinweis('Einfügen fehlgeschlagen: $e');
+    } finally {
+      if (mounted) setState(() => _isUploading = false);
+    }
+  }
+
+  /// Eine Datei hochladen und in die Warteliste des Formulars legen.
+  /// Gibt `false` zurück, wenn es nicht geklappt hat.
+  Future<bool> _uploadOne(Uint8List bytes, String name) async {
+    try {
+      // Nur retten, was sonst abgewiesen würde – siehe verkleinereWennNoetig.
+      if (bytes.length > kMaxAttachmentBytes && istBildDateiname(name)) {
+        final ergebnis = await compute(verkleinereWennNoetig, bytes);
+        bytes = ergebnis.bytes;
+      }
+      if (bytes.length > kMaxAttachmentBytes) {
+        _zeigeHinweis('„$name" ist größer als 10 MB und lässt sich nicht anhängen.');
+        return false;
+      }
+
+      final hochgeladen = await ApiService.uploadAttachment(
+        widget.taskId,
+        bytes: bytes,
+        fileName: name,
+        contentType: mimeFuerDateiname(name),
+      );
+      if (!mounted) return false;
+      setState(() => _pendingUploads = [..._pendingUploads, hochgeladen]);
+      return true;
+    } catch (e) {
+      _zeigeHinweis('Hochladen fehlgeschlagen: $e');
+      return false;
+    }
+  }
+
+  /// Einen noch nicht abgeschickten Anhang wieder wegnehmen. Er wird auch beim
+  /// Server gelöscht – sonst bliebe eine Datei liegen, die niemand mehr sieht.
+  Future<void> _removePendingUpload(SphereAttachment attachment) async {
+    setState(() => _pendingUploads =
+        _pendingUploads.where((a) => a.id != attachment.id).toList());
+    try {
+      await ApiService.deleteAttachment(attachment.id);
+    } catch (e) {
+      // Aus der Ansicht ist er weg, das war der Wunsch. Bleibt er beim Server
+      // liegen, räumt ihn der tägliche Lauf nach 24 Stunden ab.
+      debugPrint('[Anhänge] Verwerfen fehlgeschlagen: $e');
+    }
+  }
+
+  void _zeigeHinweis(String text) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
 
   Future<void> _openAttachment(SphereAttachment attachment) async {
     if (attachment.isExpired) {
@@ -270,9 +428,11 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
   }
 
   Future<void> _addLogEntry() async {
-    if (_logTextController.text.trim().isEmpty) {
+    // Ein Bild allein ist eine vollwertige Meldung – Text ist nur dann Pflicht,
+    // wenn gar nichts angehängt ist.
+    if (_logTextController.text.trim().isEmpty && _pendingUploads.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Bitte geben Sie einen Text ein')),
+        const SnackBar(content: Text('Bitte einen Text eingeben oder etwas anhängen')),
       );
       return;
     }
@@ -282,13 +442,18 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
       await _taskService.addLogEntry(
         widget.taskId,
         _logTextController.text.trim(),
+        attachmentIds: _pendingUploads.map((a) => a.id).toList(),
       );
       _logTextController.clear();
       if (!mounted) return;
       setState(() {
         _task = _taskService.getTaskById(widget.taskId);
+        _pendingUploads = [];
         _isBusy = false;
       });
+      // Die Anhänge gehören jetzt zum neuen Eintrag – frisch holen, damit sie
+      // im Verlauf an der richtigen Stelle auftauchen.
+      _loadAttachments();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Eintrag hinzugefügt')),
       );
@@ -1347,28 +1512,46 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
   }
 
   Widget _buildAddLogEntryForm() {
-    return SizedBox(
-      height: 210,
-      child: Material(
-        elevation: 0,
-        color: AppColors.navyPale,
-        child: Padding(
-          padding: const EdgeInsets.all(16),
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              Row(
-                children: [
-                  Text('Neuer Eintrag', style: Theme.of(context).textTheme.titleSmall),
-                  const Spacer(),
-                  Text(
-                    AuthService.displayName ?? AuthService.email ?? '',
-                    style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
-                  ),
-                ],
-              ),
-              const SizedBox(height: 8),
-              Expanded(
+    // Keine feste Höhe mehr: Der Kasten wächst um die Anhänge, sobald welche
+    // angehängt sind. Das Textfeld behält seine Höhe, damit das Formular nicht
+    // bei jedem Tippen springt.
+    return Material(
+      elevation: 0,
+      color: AppColors.navyPale,
+      child: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Row(
+              children: [
+                Text('Neuer Eintrag', style: Theme.of(context).textTheme.titleSmall),
+                const Spacer(),
+                Text(
+                  AuthService.displayName ?? AuthService.email ?? '',
+                  style: Theme.of(context).textTheme.bodySmall?.copyWith(color: Colors.grey[600]),
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 110,
+              // Strg+V muss hier abgefangen werden, bevor das Textfeld es als
+              // Einfügen von Text versteht. Die Taste wird bewusst NICHT als
+              // erledigt gemeldet (KeyEventResult.ignored): Liegt Text in der
+              // Zwischenablage, soll er ganz normal im Feld landen. Nur wenn
+              // dort ein Bild oder eine Datei liegt, kommt zusätzlich ein
+              // Anhang dazu.
+              child: Focus(
+                onKeyEvent: (node, event) {
+                  if (event is KeyDownEvent &&
+                      HardwareKeyboard.instance.isControlPressed &&
+                      event.logicalKey == LogicalKeyboardKey.keyV) {
+                    _pasteFromClipboard();
+                  }
+                  return KeyEventResult.ignored;
+                },
                 child: TextField(
                   controller: _logTextController,
                   expands: true,
@@ -1383,20 +1566,75 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                   ),
                 ),
               ),
+            ),
+            if (_pendingUploads.isNotEmpty) ...[
               const SizedBox(height: 8),
-              SizedBox(
-                width: double.infinity,
-                child: ElevatedButton.icon(
-                  onPressed: _isBusy ? null : _addLogEntry,
-                  icon: const Icon(Icons.add),
-                  label: const Text('Eintrag hinzufügen'),
-                  style: ElevatedButton.styleFrom(
-                    padding: const EdgeInsets.symmetric(vertical: 12),
-                  ),
-                ),
+              AttachmentStrip(
+                attachments: _pendingUploads,
+                onOpen: _openAttachment,
+                onDelete: _isBusy ? null : _removePendingUpload,
               ),
             ],
-          ),
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                // Anhängen sitzt links neben dem Absenden, nicht darüber: So
+                // liest sich die Zeile als „erst dranhängen, dann abschicken".
+                // Beide Knöpfe nur mit Symbol – in einer schmal gezogenen Pane
+                // bliebe für den Absenden-Knopf sonst kaum Platz.
+                Tooltip(
+                  message: 'Datei anhängen (max. $kMaxAttachmentsPerEntry, je 10 MB)',
+                  child: OutlinedButton(
+                    onPressed: _isBusy || _isUploading ? null : _pickAndUploadFiles,
+                    style: OutlinedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+                      minimumSize: const Size(0, 0),
+                    ),
+                    child: _isUploading
+                        ? const SizedBox(
+                            width: 18,
+                            height: 18,
+                            child: CircularProgressIndicator(strokeWidth: 2),
+                          )
+                        : const Icon(Icons.attach_file, size: 18),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                // Der Knopf macht den Weg sichtbar. Strg+V allein wäre eine
+                // versteckte Funktion, von der niemand erfährt.
+                //
+                // Auf dem Handy entfällt er: Dort gibt es keine Zwischenablage
+                // für Bilder, die App käme nicht heran, und der Knopf würde
+                // ausnahmslos „kein Bild in der Zwischenablage" melden – ein
+                // Knopf, der nie etwas tut, ist schlimmer als keiner. Screenshots
+                // holt man dort über die Büroklammer aus der Galerie.
+                if (_zwischenablageMoeglich) ...[
+                  Tooltip(
+                    message: 'Bild oder Datei aus der Zwischenablage einfügen (Strg+V)',
+                    child: OutlinedButton(
+                      onPressed: _isBusy || _isUploading ? null : _pasteFromClipboard,
+                      style: OutlinedButton.styleFrom(
+                        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 12),
+                        minimumSize: const Size(0, 0),
+                      ),
+                      child: const Icon(Icons.content_paste, size: 18),
+                    ),
+                  ),
+                  const SizedBox(width: 6),
+                ],
+                Expanded(
+                  child: ElevatedButton.icon(
+                    onPressed: _isBusy ? null : _addLogEntry,
+                    icon: const Icon(Icons.add),
+                    label: const Text('Eintrag hinzufügen'),
+                    style: ElevatedButton.styleFrom(
+                      padding: const EdgeInsets.symmetric(vertical: 12),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
         ),
       ),
     );
