@@ -92,9 +92,20 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
   }
 
   Future<void> _loadAttachments() async {
+    // Erst der bekannte Stand aus dem Zwischenspeicher – ohne Netz ist das
+    // alles, was es gibt, und mit Netz verschwindet dadurch das Flackern.
+    final bekannt = _task?.attachments ?? const <SphereAttachment>[];
+    if (bekannt.isNotEmpty && mounted) {
+      setState(() {
+        _attachments = List.of(bekannt);
+        _attachmentsLoaded = true;
+      });
+    }
+
     try {
       final attachments = await ApiService.getAttachments(widget.taskId);
       if (!mounted) return;
+      _task?.setAttachments(attachments);
       setState(() {
         _attachments = attachments;
         _attachmentsLoaded = true;
@@ -361,9 +372,9 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
       ));
       return;
     }
-    // Ein Bild schaut man an, eine Datei will man haben. Deshalb zwei
-    // verschiedene Hauptwege statt eines Zwischendialogs, den man erst
-    // wegklicken muss.
+    // Ein Bild schaut man in der App an, eine Datei im dafür zuständigen
+    // Programm. Beides ist „ansehen" – deshalb ist Antippen in beiden Fällen
+    // der Weg dorthin, und Speichern bzw. Teilen liegt daneben.
     if (attachment.isImage) {
       await showAttachmentViewer(
         context,
@@ -372,7 +383,17 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
       );
       return;
     }
-    await _saveAttachment(attachment);
+
+    // Wartet die Datei noch auf ihre Übertragung, liegt sie schon auf dem
+    // Gerät – dann direkt von dort öffnen statt sie beim Server zu suchen.
+    if (attachment.isLocalOnly) {
+      _zeigeHinweis('„${attachment.fileName}" wird noch übertragen.');
+      return;
+    }
+
+    final ergebnis = await AttachmentFiles.oeffnen(attachment);
+    if (ergebnis == null || !mounted) return;
+    if (ergebnis.meldung.isNotEmpty) _zeigeHinweis(ergebnis.meldung);
   }
 
   /// Datei speichern (Rechner) bzw. weiterreichen (Handy).
@@ -436,7 +457,21 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     // Ein Abgleich kann den Verlauf als veraltet markiert haben, weil jemand
     // anderes etwas ergaenzt hat. Dann hier nachladen – die Sphere ist ja
     // gerade offen, initState und didUpdateWidget laufen nicht mehr.
-    if (!updated.logsLoaded) _taskService.loadLogs(widget.taskId);
+    //
+    // Nicht erneut versuchen, wenn der letzte Versuch am Netz gescheitert ist:
+    // Sonst löste jeder Neuaufbau einen weiteren aus, und das Ladezeichen kam
+    // nie zur Ruhe.
+    if (!updated.logsLoaded && !updated.logsLoadFailed) {
+      _taskService.loadLogs(widget.taskId);
+    }
+    // Die Anhänge kommen mit dem Verlauf; sind sie inzwischen da, hier
+    // übernehmen. Ohne das sah man nach einem verspäteten Nachladen zwar die
+    // Einträge, aber keine Kacheln – bis man die Sphere verließ und erneut
+    // öffnete.
+    if (updated.attachments.length != _attachments.length) {
+      _attachments = List.of(updated.attachments);
+      _attachmentsLoaded = true;
+    }
     // Nur aktualisieren wenn das Feld gerade nicht bearbeitet wird
     if (!_titleFocusNode.hasFocus) {
       final newTitle = updated.title;
@@ -1142,11 +1177,15 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
         children: [
           Text('Aktivitätsverlauf', style: Theme.of(context).textTheme.titleLarge),
           const SizedBox(height: 16),
-          // Der Verlauf wird erst beim Öffnen der Sphere geholt. Bis die
+          // Der Verlauf wird beim Öffnen der Sphere frisch geholt. Bis die
           // Antwort da ist, darf hier nicht „Noch keine Einträge" stehen – das
-          // wäre für Spheres mit Verlauf schlicht falsch. Solange die bekannte
-          // Anzahl größer null ist, zeigen wir deshalb einen Ladehinweis.
-          if (!task.logsLoaded && task.logCount > 0)
+          // wäre für Spheres mit Verlauf schlicht falsch.
+          //
+          // Das Ladezeichen erscheint aber NUR, solange der Versuch noch läuft.
+          // Ohne die Prüfung auf logsLoadFailed drehte es sich ohne Netz endlos
+          // weiter, und jeder Neuaufbau stieß einen weiteren vergeblichen
+          // Versuch an.
+          if (!task.logsLoaded && !task.logsLoadFailed && task.logCount > 0)
             const Padding(
               padding: EdgeInsets.symmetric(vertical: 16),
               child: Center(
@@ -1154,6 +1193,27 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                   width: 20,
                   height: 20,
                   child: CircularProgressIndicator(strokeWidth: 2),
+                ),
+              ),
+            )
+          else if (task.logEntries.isEmpty && task.logsLoadFailed)
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 16),
+              child: Center(
+                child: Column(
+                  children: [
+                    Icon(Icons.cloud_off, color: Colors.grey[500], size: 20),
+                    const SizedBox(height: 6),
+                    Text(
+                      'Der Verlauf ist gerade nicht abrufbar.\n'
+                      'Er erscheint, sobald wieder Verbindung besteht.',
+                      textAlign: TextAlign.center,
+                      style: Theme.of(context)
+                          .textTheme
+                          .bodySmall
+                          ?.copyWith(color: Colors.grey[600]),
+                    ),
+                  ],
                 ),
               ),
             )
@@ -1584,6 +1644,7 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                           AttachmentStrip(
                             attachments: attachments,
                             onOpen: _openAttachment,
+                            onSave: _saveAttachment,
                           ),
                         ],
                         if (!isLast) const SizedBox(height: 16),

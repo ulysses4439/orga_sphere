@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart'
     show defaultTargetPlatform, TargetPlatform, debugPrint;
+import 'package:open_filex/open_filex.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
@@ -69,6 +70,59 @@ class AttachmentFiles {
     }
   }
 
+  /// Öffnet einen Anhang mit dem Programm, das dafür zuständig ist.
+  ///
+  /// Der Weg, den man bei einem PDF, einer Word-Datei oder einer Tabelle
+  /// erwartet: antippen und ansehen. Das Teilen-Blatt ist dafür der falsche
+  /// Umweg — es fragt, wohin die Datei gehen soll, obwohl man sie nur lesen
+  /// will.
+  ///
+  /// Die Datei wird dafür in den Zwischenspeicher des Geräts geschrieben, unter
+  /// ihrem echten Namen: Das öffnende Programm zeigt ihn an, und an der Endung
+  /// erkennt das System überhaupt erst, womit es die Datei öffnen soll.
+  static Future<AnhangErgebnis?> oeffnen(SphereAttachment anhang) async {
+    if (anhang.isExpired) {
+      return AnhangErgebnis.fehler(
+        '„${anhang.fileName}" wurde nach einem Jahr entfernt.',
+      );
+    }
+    try {
+      final bytes = await ApiService.downloadAttachment(anhang.id);
+      final ordner = await getTemporaryDirectory();
+      final datei = File(
+          '${ordner.path}${Platform.pathSeparator}${_sicher(anhang.fileName)}');
+      await datei.writeAsBytes(bytes);
+
+      if (istRechner) {
+        // Kein Zusatzpaket nötig: Das ist genau das, was ein Doppelklick im
+        // Explorer tut. Der leere erste Parameter ist Pflicht — `start` deutet
+        // sonst einen Pfad in Anführungszeichen als Fenstertitel.
+        if (defaultTargetPlatform == TargetPlatform.windows) {
+          await Process.run('cmd', ['/c', 'start', '', datei.path]);
+        } else if (defaultTargetPlatform == TargetPlatform.macOS) {
+          await Process.run('open', [datei.path]);
+        } else {
+          await Process.run('xdg-open', [datei.path]);
+        }
+        return AnhangErgebnis.geoeffnet();
+      }
+
+      final ergebnis = await OpenFilex.open(datei.path);
+      if (ergebnis.type == ResultType.done) return AnhangErgebnis.geoeffnet();
+      if (ergebnis.type == ResultType.noAppToOpen) {
+        return AnhangErgebnis.fehler(
+          'Für „${anhang.fileName}" ist keine passende App installiert. '
+          'Über „Teilen" lässt sie sich trotzdem weitergeben.',
+        );
+      }
+      return AnhangErgebnis.fehler(
+          'Die Datei ließ sich nicht öffnen: ${ergebnis.message}');
+    } catch (e) {
+      debugPrint('[Anhänge] Öffnen fehlgeschlagen: $e');
+      return AnhangErgebnis.fehler('Die Datei ließ sich nicht öffnen: $e');
+    }
+  }
+
   /// Zeigt die gespeicherte Datei im Explorer an (nur Windows).
   ///
   /// Der Komma-Aufbau ist keine Schludrigkeit, sondern die Erwartung des
@@ -103,6 +157,11 @@ class AnhangErgebnis {
 
   factory AnhangErgebnis.geteilt() =>
       const AnhangErgebnis._('Datei bereitgestellt.', true, null);
+
+  /// Geöffnet – hier ist bewusst keine Meldung nötig: Das Ergebnis steht ja
+  /// schon sichtbar auf dem Bildschirm.
+  factory AnhangErgebnis.geoeffnet() =>
+      const AnhangErgebnis._('', true, null);
 
   factory AnhangErgebnis.fehler(String meldung) =>
       AnhangErgebnis._(meldung, false, null);

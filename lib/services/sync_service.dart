@@ -52,7 +52,7 @@ class SyncService {
         body: {
           ...?befehl.body,
           // Der Server übernimmt diesen Zeitpunkt statt „jetzt" zu setzen.
-          'occurredAt': befehl.occurredAt.toIso8601String(),
+          'occurredAt': befehl.occurredAt.toUtc().toIso8601String(),
         },
       );
       return OutboxErgebnis.erledigt;

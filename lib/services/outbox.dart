@@ -58,7 +58,7 @@ class OutboxCommand {
         'method': method,
         'path': path,
         'body': body,
-        'occurredAt': occurredAt.toIso8601String(),
+        'occurredAt': occurredAt.toUtc().toIso8601String(),
         'stagedFilePath': stagedFilePath,
         'versuche': versuche,
         'letzterVersuch': letzterVersuch?.toIso8601String(),

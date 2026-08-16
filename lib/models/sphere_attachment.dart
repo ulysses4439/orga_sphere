@@ -105,6 +105,25 @@ class SphereAttachment {
     );
   }
 
+  /// Fuer den lokalen Zwischenspeicher – Feldnamen wie in der Server-Antwort,
+  /// damit [SphereAttachment.fromJson] beide Quellen liest.
+  ///
+  /// `localPath` bleibt aussen vor: Ein Anhang, der noch im Zwischenlager
+  /// wartet, gehoert der Warteschlange und nicht dem Datenbestand.
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'taskId': taskId,
+        'logEntryId': logEntryId,
+        'fileName': fileName,
+        'contentType': contentType,
+        'sizeBytes': sizeBytes,
+        'isImage': isImage,
+        'uploadedBy': uploadedBy,
+        'uploadedByName': uploadedByName,
+        'createdAt': createdAt.toIso8601String(),
+        'blobDeletedAt': blobDeletedAt?.toIso8601String(),
+      };
+
   @override
   bool operator ==(Object other) =>
       identical(this, other) ||

@@ -1,3 +1,4 @@
+import 'sphere_attachment.dart';
 import 'task_status.dart';
 import 'task_recurrence.dart';
 import 'task_log_entry.dart';
@@ -39,6 +40,19 @@ class Task {
   /// Sphere den kompletten Verlauf, nur um diese Zahl anzeigen zu koennen.
   int logCount;
 
+  /// Anhaenge dieser Sphere. Liegen mit im Zwischenspeicher, damit sie ohne
+  /// Netz wenigstens als Kachel erscheinen – die Datei selbst laesst sich dann
+  /// zwar nicht anzeigen, aber man sieht, dass es sie gibt.
+  final List<SphereAttachment> attachments;
+
+  /// Letzter Versuch, den Verlauf zu holen, ist gescheitert (meist: kein Netz).
+  ///
+  /// Ohne dieses Kennzeichen liefe die Anzeige in eine Falle: [logsLoaded]
+  /// blieb false, und der Aktivitaetsverlauf zeigte endlos ein Ladezeichen,
+  /// weil ein neuer Versuch ebenfalls scheiterte. Nicht Teil des
+  /// Zwischenspeichers – beim naechsten Start wird es ohnehin neu versucht.
+  bool logsLoadFailed = false;
+
   /// Wurde der Verlauf fuer diese Sphere schon vom Server geholt?
   ///
   /// Unterscheidet „noch nicht geladen" von „geladen und tatsaechlich leer" –
@@ -73,7 +87,9 @@ class Task {
     this.assignedToEmail,
     this.logCount = 0,
     List<TaskLogEntry>? logEntries,
-  }) : logEntries = logEntries ?? [];
+    List<SphereAttachment>? attachments,
+  })  : logEntries = logEntries ?? [],
+        attachments = attachments ?? [];
 
   factory Task.fromJson(Map<String, dynamic> json) {
     return Task(
@@ -107,17 +123,31 @@ class Task {
       assignedToName: json['assignedToName'] as String?,
       assignedToEmail: json['assignedToEmail'] as String?,
       logCount: (json['logCount'] as int?) ?? 0,
-    );
+      // Nur im Zwischenspeicher vorhanden; der Server liefert den Verlauf
+      // ueber einen eigenen Aufruf.
+      logEntries: (json['logEntries'] as List<dynamic>?)
+          ?.map((j) => TaskLogEntry.fromJson(j as Map<String, dynamic>))
+          .toList(),
+      attachments: (json['attachments'] as List<dynamic>?)
+          ?.map((j) => SphereAttachment.fromJson(j as Map<String, dynamic>))
+          .toList(),
+    )..logsLoaded = json['logsLoaded'] == true;
   }
 
   /// Fuer den lokalen Zwischenspeicher. Die Feldnamen entsprechen genau denen
   /// der Server-Antwort, damit [Task.fromJson] beide Quellen lesen kann und es
   /// keine zweite, leicht abweichende Leseroutine gibt.
   ///
-  /// Der Verlauf bleibt aussen vor: Er wird ohnehin beim Oeffnen der Sphere
-  /// frisch geholt, und im Zwischenspeicher wuerde er die Datei unnoetig
-  /// aufblaehen. Die Anzahl [logCount] reicht fuer die Listenanzeige.
+  /// Der Verlauf wandert MIT in den Zwischenspeicher.
+  ///
+  /// Frueher blieb er aussen vor, weil er beim Oeffnen der Sphere ohnehin frisch
+  /// geholt wurde. Ohne Netz ging das aber nicht: Der Aktivitaetsverlauf zeigte
+  /// dann endlos ein Ladezeichen, weil er nur eine Quelle kannte - den Server.
+  /// Die paar Kilobyte sind den Unterschied wert.
   Map<String, dynamic> toJson() => {
+        'logEntries': logEntries.map((l) => l.toJson()).toList(),
+        'logsLoaded': logsLoaded,
+        'attachments': attachments.map((a) => a.toJson()).toList(),
         'id': id,
         'domainId': domainId,
         'title': title,
@@ -173,6 +203,14 @@ class Task {
       ..sort((a, b) => b.timestamp.compareTo(a.timestamp));
     logCount = logEntries.length;
     logsLoaded = true;
+    logsLoadFailed = false;
+  }
+
+  /// Uebernimmt die vom Server geholten Anhaenge.
+  void setAttachments(List<SphereAttachment> neue) {
+    attachments
+      ..clear()
+      ..addAll(neue);
   }
 
   void markAsDone() {

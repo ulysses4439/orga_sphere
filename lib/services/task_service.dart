@@ -173,6 +173,11 @@ class TaskService extends ChangeNotifier {
   ///
   /// Genau hier lag die Hauptlast des alten Startvorgangs: ein eigener Abruf
   /// je Sphere, jeder mit eigenem Verbindungsaufbau.
+  /// Holt Verlauf und Anhaenge einer Sphere.
+  ///
+  /// Beide zusammen, weil sie zusammen angezeigt werden: Kamen die Anhaenge
+  /// getrennt, sah man nach einem verspaeteten Nachladen zwar die Eintraege,
+  /// aber keine Kacheln mehr - genau das war auf dem Handy zu beobachten.
   Future<void> loadLogs(String taskId, {bool force = false}) async {
     final task = getTaskById(taskId);
     if (task == null) return;
@@ -181,9 +186,22 @@ class TaskService extends ChangeNotifier {
       final logs = await ApiService.getLogs(taskId);
       task.setLogEntries(logs);
       notifyListeners();
-    } catch (_) {
-      // Ohne Netz bleibt der Verlauf eben leer; die uebrigen Angaben der
-      // Sphere sind trotzdem sichtbar. Der naechste Aufbau versucht es erneut.
+
+      // Anhaenge danach - ihr Fehlschlag darf den Verlauf nicht entwerten.
+      try {
+        task.setAttachments(await ApiService.getAttachments(taskId));
+      } catch (e) {
+        debugPrint('[Anhänge] nicht geladen: $e');
+      }
+      _touch();
+    } catch (e) {
+      // Ohne Netz bleibt es beim zwischengespeicherten Stand. Wichtig ist das
+      // Kennzeichen: Ohne es bliebe logsLoaded false, die Anzeige zeigte
+      // endlos ein Ladezeichen, und jeder Neuaufbau loeste einen weiteren
+      // vergeblichen Versuch aus.
+      task.logsLoadFailed = true;
+      debugPrint('[Verlauf] nicht geladen: $e');
+      notifyListeners();
     }
   }
 
@@ -391,7 +409,7 @@ class TaskService extends ChangeNotifier {
         method: method,
         path: path,
         commandId: commandId,
-        body: {...?body, 'occurredAt': geschehenAm.toIso8601String()},
+        body: {...?body, 'occurredAt': geschehenAm.toUtc().toIso8601String()},
       );
     } on OfflineException {
       await Outbox().einreihen(OutboxCommand(

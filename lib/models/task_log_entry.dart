@@ -22,6 +22,15 @@ class TaskLogEntry {
     );
   }
 
+  /// Fuer den lokalen Zwischenspeicher – Feldnamen wie in der Server-Antwort,
+  /// damit [TaskLogEntry.fromJson] beide Quellen liest.
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'user': user,
+        'timestamp': timestamp.toIso8601String(),
+        'text': text,
+      };
+
   /// Create a copy with modified fields
   TaskLogEntry copyWith({
     String? id,

@@ -504,7 +504,14 @@ class ApiService {
           .patch(
             Uri.parse('$_baseUrl/tasks/$taskId/done'),
             headers: {..._headers, 'X-Command-Id': ?commandId},
-            body: jsonEncode({'occurredAt': ?occurredAt?.toIso8601String()}),
+            // UTC ist Pflicht: `toIso8601String()` einer lokalen Zeit hat KEINE
+            // Zeitzonenangabe, und der Server liest sie dann als seine eigene
+            // Zeit (Azure läuft in UTC). Aus 09:23 deutscher Zeit wurden dort
+            // 09:23 UTC – zwei Stunden in der Zukunft, worauf die Begrenzung
+            // im Backend sie auf „jetzt" kappte. Offline erfasste Zeitpunkte
+            // gingen so verloren.
+            body: jsonEncode(
+                {'occurredAt': ?occurredAt?.toUtc().toIso8601String()}),
           )
           .timeout(AuthService.timeout);
       _checkStatus(response);
@@ -614,7 +621,7 @@ class ApiService {
       DateTime? occurredAt}) async {
     final response = await _postMitKennung('/logs', commandId, {
       'id': ?entryId,
-      'occurredAt': ?occurredAt?.toIso8601String(),
+      'occurredAt': ?occurredAt?.toUtc().toIso8601String(),
       'taskId': taskId,
       'text': text,
       // Bereits hochgeladene Anhänge, die dieser Eintrag übernehmen soll. Der

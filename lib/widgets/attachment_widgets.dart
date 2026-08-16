@@ -4,6 +4,7 @@ import 'dart:io' show File;
 import 'package:flutter/material.dart';
 import '../models/models.dart';
 import '../services/api_service.dart';
+import '../services/attachment_files.dart';
 import '../theme/app_colors.dart';
 
 /// Anhänge unter einem Verlaufseintrag.
@@ -22,11 +23,15 @@ class AttachmentStrip extends StatelessWidget {
   /// Ohne diesen Rückruf erscheint kein Löschen-Knopf.
   final void Function(SphereAttachment)? onDelete;
 
+  /// Speichern bzw. Teilen einer Datei.
+  final void Function(SphereAttachment)? onSave;
+
   const AttachmentStrip({
     super.key,
     required this.attachments,
     required this.onOpen,
     this.onDelete,
+    this.onSave,
   });
 
   @override
@@ -39,6 +44,11 @@ class AttachmentStrip extends StatelessWidget {
                 attachment: a,
                 onOpen: () => onOpen(a),
                 onDelete: onDelete == null ? null : () => onDelete!(a),
+                // Wartet die Datei noch auf ihre Übertragung, gibt es beim
+                // Server nichts zu holen – dann kein Speichern-Symbol.
+                onSave: (onSave == null || a.isLocalOnly || a.isExpired)
+                    ? null
+                    : () => onSave!(a),
               ))
           .toList(),
     );
@@ -51,11 +61,17 @@ class AttachmentTile extends StatelessWidget {
   final VoidCallback onOpen;
   final VoidCallback? onDelete;
 
+  /// Speichern (Rechner) bzw. Teilen (Handy). Ohne diesen Rückruf erscheint
+  /// das kleine Symbol rechts nicht — etwa bei Anhängen, die noch auf ihre
+  /// Übertragung warten.
+  final VoidCallback? onSave;
+
   const AttachmentTile({
     super.key,
     required this.attachment,
     required this.onOpen,
     this.onDelete,
+    this.onSave,
   });
 
   static const double _thumbSize = 96;
@@ -154,45 +170,78 @@ class AttachmentTile extends StatelessWidget {
   Widget _buildFile(BuildContext context) {
     return Tooltip(
       message: '${attachment.fileName}\n${attachment.readableSize}\n'
-          'Klicken zum Speichern',
-      child: InkWell(
-        onTap: onOpen,
-        borderRadius: BorderRadius.circular(8),
-        child: Container(
-          width: 190,
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-          decoration: BoxDecoration(
-            color: AppColors.lightGrey,
-            borderRadius: BorderRadius.circular(8),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(_iconFor(attachment.fileName), size: 24, color: AppColors.navy),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Text(
-                      attachment.fileName,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: Theme.of(context).textTheme.bodySmall,
-                    ),
-                    Text(
-                      attachment.readableSize,
-                      style: Theme.of(context)
-                          .textTheme
-                          .bodySmall
-                          ?.copyWith(color: Colors.grey[600], fontSize: 11),
-                    ),
-                  ],
+          'Klicken zum Öffnen',
+      child: Container(
+        width: 210,
+        decoration: BoxDecoration(
+          color: AppColors.lightGrey,
+          borderRadius: BorderRadius.circular(8),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            // Antippen öffnet – das ist bei einem PDF oder einer Tabelle die
+            // erwartete Handlung. Weitergeben ist der Sonderfall und bekommt
+            // daher das kleine Symbol rechts.
+            Expanded(
+              child: InkWell(
+                onTap: onOpen,
+                borderRadius: BorderRadius.circular(8),
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Icon(_iconFor(attachment.fileName),
+                          size: 24, color: AppColors.navy),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Text(
+                              attachment.fileName,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                            Text(
+                              attachment.readableSize,
+                              style: Theme.of(context)
+                                  .textTheme
+                                  .bodySmall
+                                  ?.copyWith(color: Colors.grey[600], fontSize: 11),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
-            ],
-          ),
+            ),
+            if (onSave != null)
+              Tooltip(
+                message: AttachmentFiles.istRechner
+                    ? 'Speichern unter'
+                    : 'Teilen',
+                child: InkWell(
+                  onTap: onSave,
+                  borderRadius: BorderRadius.circular(8),
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(6, 10, 10, 10),
+                    child: Icon(
+                      AttachmentFiles.istRechner
+                          ? Icons.download_outlined
+                          : Icons.ios_share,
+                      size: 18,
+                      color: Colors.grey[700],
+                    ),
+                  ),
+                ),
+              ),
+          ],
         ),
       ),
     );
