@@ -41,7 +41,13 @@ class LocalCache {
 
   /// Format der Datei. Bei einer Aenderung an den gespeicherten Feldern hier
   /// hochzaehlen: Ein alter Stand wird dann verworfen statt halb gelesen.
-  static const _formatVersion = 1;
+  ///
+  /// 2: Verlaufseintraege haben createdBy und editedAt bekommen. Ein Stand aus
+  ///    Version 1 kennt beide nicht - die Eintraege saehen dann aus, als
+  ///    gehoerten sie niemandem, und ihr Verfasser bekaeme kein Menue zum
+  ///    Bearbeiten. Genau das war zu sehen: alte Eintraege ohne Drei-Punkte-
+  ///    Menue, waehrend derselbe Eintrag auf dem anderen Geraet eines hatte.
+  static const _formatVersion = 2;
 
   static Future<File> _file() async {
     final dir = await getApplicationSupportDirectory();

@@ -53,6 +53,16 @@ class TaskService extends ChangeNotifier {
   /// Zwischenspeicher gelesen wurde oder der letzte Abgleich scheiterte.
   bool get isStale => _isStale;
 
+  /// Sphere, deren Detailansicht gerade offen ist – oder `null`.
+  ///
+  /// Nur fuer sie wird der Verlauf bei jedem Abgleich mitgeholt. Fuer alle
+  /// anderen waere das Verschwendung: Man sieht sie ohnehin nicht.
+  String? _offeneSphere;
+
+  /// Meldet, welche Sphere gerade offen ist. Die Detailansicht ruft das beim
+  /// Oeffnen und mit `null` beim Schliessen.
+  void sphereGeoeffnet(String? taskId) => _offeneSphere = taskId;
+
   /// Laeuft gerade ein Abgleich? Die Oberflaeche unterscheidet damit „noch am
   /// Laden" von „fehlgeschlagen" – waehrend des ersten Abgleichs nach dem Start
   /// darf nicht „Keine Verbindung" dastehen.
@@ -130,6 +140,15 @@ class TaskService extends ChangeNotifier {
         domains: _domains,
         tasks: _tasks,
       );
+
+      // Den Verlauf der gerade offenen Sphere mit erneuern.
+      //
+      // /sync liefert nur die Anzahl der Eintraege. Aendert jemand am anderen
+      // Geraet den TEXT eines Eintrags, bleibt die Anzahl gleich – die
+      // Aenderung wuerde hier nie ankommen, solange die Sphere offen bleibt.
+      // Betrifft nur die eine offene Sphere, also eine Anfrage je Abgleich.
+      final offen = _offeneSphere;
+      if (offen != null) await loadLogs(offen, force: true);
     } catch (e) {
       _lastError = e;
       _isStale = true;

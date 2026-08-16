@@ -91,6 +91,7 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     // der Glocke muss dafür nicht extra angetippt werden.
     _markNotificationsRead();
     _notifications.addListener(_markNotificationsRead);
+    _taskService.sphereGeoeffnet(widget.taskId);
     _taskService.loadLogs(widget.taskId);
     _loadAttachments();
   }
@@ -424,6 +425,7 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     // Desktop: das Panel wird beim Wechsel der Auswahl wiederverwendet.
     if (oldWidget.taskId != widget.taskId) {
       _markNotificationsRead();
+      _taskService.sphereGeoeffnet(widget.taskId);
       _taskService.loadLogs(widget.taskId);
     }
   }
@@ -439,6 +441,7 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
   void dispose() {
     _notifications.removeListener(_markNotificationsRead);
     _taskService.removeListener(_onServiceChanged);
+    _taskService.sphereGeoeffnet(null);
     // Noch nicht gespeicherte Eingaben sichern, BEVOR die Controller weg sind:
     // Wer den Titel ändert und sofort auf „Zurück" tippt bzw. das Detailpanel
     // schließt, verlässt die Ansicht ohne dass das Feld den Fokus verliert –
