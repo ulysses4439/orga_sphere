@@ -64,6 +64,10 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
   List<SphereAttachment> _attachments = [];
   bool _attachmentsLoaded = false;
 
+  /// Stand der Verbindung beim letzten Aufbau. Nur der Wechsel von "weg" nach
+  /// "wieder da" löst ein Nachladen aus – ein Dauerzustand darf das nicht.
+  bool _warOhneVerbindung = false;
+
   /// Bereits hochgeladene Anhänge, die auf das Absenden dieses Eintrags warten.
   /// Sie liegen schon beim Server, gehören aber noch zu keinem Eintrag – der
   /// existiert ja noch nicht.
@@ -464,6 +468,18 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     if (!updated.logsLoaded && !updated.logsLoadFailed) {
       _taskService.loadLogs(widget.taskId);
     }
+
+    // Verbindung war weg und ist wieder da: einmal frisch holen.
+    //
+    // Ohne das blieb eine offen gebliebene Sphere auf ihrem Offline-Stand
+    // stehen – ältere Bilder fehlten weiter, und ein gerade übertragener
+    // Anhang trug immer noch das Wolkensymbol. Erst Verlassen und erneutes
+    // Öffnen half, und das ist keine Bedienung, die man jemandem erklären will.
+    final jetztOhneVerbindung = _taskService.isStale;
+    if (_warOhneVerbindung && !jetztOhneVerbindung) {
+      _taskService.loadLogs(widget.taskId, force: true);
+    }
+    _warOhneVerbindung = jetztOhneVerbindung;
     // Die Anhänge kommen mit dem Verlauf; sind sie inzwischen da, hier
     // übernehmen. Ohne das sah man nach einem verspäteten Nachladen zwar die
     // Einträge, aber keine Kacheln – bis man die Sphere verließ und erneut

@@ -115,6 +115,12 @@ class TaskService extends ChangeNotifier {
 
       final data = await ApiService.sync();
       _apply(data.domains, data.tasks);
+      // Die Verbindung steht wieder: Ein frueher gescheiterter Verlaufsabruf
+      // darf jetzt erneut versucht werden. Ohne das blieb das Kennzeichen
+      // haengen, und eine offen gebliebene Sphere lud nie nach.
+      for (final t in _tasks) {
+        t.logsLoadFailed = false;
+      }
       _lastSyncAt = DateTime.now();
       _isStale = false;
       _lastError = null;
@@ -151,6 +157,11 @@ class TaskService extends ChangeNotifier {
       if (old.logsLoaded && old.logCount == task.logCount) {
         task.setLogEntries(old.logEntries);
       }
+      // Anhaenge ebenso mitnehmen. Ohne das leerte JEDER 30-Sekunden-Abgleich
+      // die Liste - die Antwort von /sync kennt keine Anhaenge -, und der
+      // Zwischenspeicher hielt danach eine Sphere ohne ihre Kacheln fest.
+      // Sichtbar wurde das erst offline: Eintraege da, Anhaenge weg.
+      if (old.attachments.isNotEmpty) task.setAttachments(old.attachments);
       // Ein Statuswechsel, der noch beim Server liegt, hat Vorrang vor dem
       // Stand aus der Antwort: Die Antwort kann aelter sein als das Antippen.
       // Ohne das taucht eine gerade abgehakte Position wieder auf, wenn der
