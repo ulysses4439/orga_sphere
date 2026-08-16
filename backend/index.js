@@ -2622,7 +2622,8 @@ app.get('/logs/:taskId', requireAuth, async (req, res) => {
 
     const result = await p.request()
       .input('taskId', sql.NVarChar, taskId)
-      .query(`SELECT tle.id, tle.taskId, COALESCE(au.displayName, tle.[user]) AS [user], tle.[text], tle.timestamp
+      .query(`SELECT tle.id, tle.taskId, COALESCE(au.displayName, tle.[user]) AS [user],
+                     tle.[text], tle.timestamp, tle.createdBy, tle.editedAt
               FROM TaskLogEntry tle
               LEFT JOIN AppUser au ON au.email = tle.[user]
               WHERE tle.taskId = @taskId ORDER BY tle.timestamp DESC`);
@@ -2695,9 +2696,10 @@ app.post('/logs', requireAuth, async (req, res) => {
       .input('user',      sql.NVarChar,  userLabel)
       .input('text',      sql.NVarChar,  text)
       .input('timestamp', sql.DateTime2, now)
-      .query(`INSERT INTO TaskLogEntry (id, taskId, [user], [text], timestamp)
+      .input('createdBy', sql.NVarChar,  req.user.userId)
+      .query(`INSERT INTO TaskLogEntry (id, taskId, [user], [text], timestamp, createdBy)
               OUTPUT INSERTED.*
-              VALUES (@id, @taskId, @user, @text, @timestamp)`);
+              VALUES (@id, @taskId, @user, @text, @timestamp, @createdBy)`);
 
     // Anhaenge dem frisch angelegten Eintrag zuordnen. Die Bedingungen sind
     // bewusst eng: nur eigene, noch nicht zugeordnete Anhaenge derselben
@@ -2741,6 +2743,123 @@ app.post('/logs', requireAuth, async (req, res) => {
       type: 'log_added', sphereId: taskId, sphereTitle: tr.title, orbitName: tr.orbitName,
       body: `${userLabel} hat einen Eintrag zu „${tr.title || 'einer Sphere'}" hinzugefügt.`,
     });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Laedt einen Verlaufseintrag und beantwortet, ob der Anfragende ihn aendern
+// darf. Bewusst NUR der Verfasser - auch nicht der Pilot. Ein Eintrag ist die
+// Aussage einer Person; sie im Namen eines anderen umzuschreiben waere etwas
+// anderes als eine Datei aufzuraeumen, wo der Pilot mitreden darf.
+//
+// createdBy ist bei Eintraegen aus der Zeit vor v19 leer, wenn sich der
+// Anzeigename damals keinem Konto eindeutig zuordnen liess. Solche Eintraege
+// gehoeren niemandem und bleiben unveraenderlich - das ist die sichere Seite.
+async function loadLogEntryForAuthor(p, entryId, userId) {
+  const row = await p.request()
+    .input('id', sql.NVarChar, entryId)
+    .query('SELECT * FROM TaskLogEntry WHERE id = @id');
+  const eintrag = row.recordset[0];
+  if (!eintrag) return { eintrag: null, allowed: false, task: null };
+
+  const { task, allowed: imOrbit } = await loadTaskForUser(p, eintrag.taskId, userId);
+  if (!task || !imOrbit) return { eintrag, allowed: false, task: null };
+
+  return {
+    eintrag,
+    task,
+    allowed: !!eintrag.createdBy && eintrag.createdBy === userId,
+  };
+}
+
+// Text eines eigenen Eintrags aendern.
+app.patch('/logs/:id', requireAuth, async (req, res) => {
+  const { text } = req.body;
+  if (rejectIfTooLong(res, 'Der Eintrag', text, FIELD_LIMITS.logText)) return;
+
+  const commandId = commandIdFromRequest(req);
+  const now = occurredAtFromRequest(req);
+  try {
+    const p = await getPool();
+
+    const frueher = await findHandledCommand(p, commandId, req.user.userId);
+    if (frueher) return res.json(frueher);
+
+    const { eintrag, allowed } = await loadLogEntryForAuthor(p, req.params.id, req.user.userId);
+    if (!eintrag) return res.status(404).json({ error: 'Eintrag nicht gefunden' });
+    if (!allowed) {
+      return res.status(403).json({ error: 'Nur wer den Eintrag verfasst hat, darf ihn ändern' });
+    }
+
+    // Ein Eintrag darf leer bleiben, solange Anhaenge dranhaengen - dieselbe
+    // Regel wie beim Anlegen.
+    const anhaenge = await p.request()
+      .input('id', sql.NVarChar, eintrag.id)
+      .query('SELECT COUNT(*) AS anzahl FROM TaskAttachment WHERE logEntryId = @id');
+    if (!String(text || '').trim() && anhaenge.recordset[0].anzahl === 0) {
+      return res.status(400).json({ error: 'Der Eintrag braucht einen Text oder einen Anhang.' });
+    }
+
+    const result = await p.request()
+      .input('id',       sql.NVarChar,  eintrag.id)
+      .input('text',     sql.NVarChar,  text)
+      .input('editedAt', sql.DateTime2, now)
+      .query(`UPDATE TaskLogEntry SET [text] = @text, editedAt = @editedAt
+              OUTPUT INSERTED.* WHERE id = @id`);
+
+    const antwort = result.recordset[0];
+    await rememberCommand(p, commandId, req.user.userId, 'log_edit', antwort);
+    res.json(antwort);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// Eigenen Eintrag loeschen - samt seiner Anhaenge.
+//
+// Die Anhaenge muessen mit weg: Sie haengen ueber logEntryId am Eintrag und
+// waeren sonst in keiner Ansicht mehr erreichbar, wuerden aber im Blob Storage
+// weiter Platz und Geld kosten, bis die Aufbewahrungsfrist zuschlaegt.
+app.delete('/logs/:id', requireAuth, async (req, res) => {
+  const commandId = commandIdFromRequest(req);
+  try {
+    const p = await getPool();
+
+    const frueher = await findHandledCommand(p, commandId, req.user.userId);
+    if (frueher) return res.json(frueher);
+
+    const { eintrag, allowed } = await loadLogEntryForAuthor(p, req.params.id, req.user.userId);
+    if (!eintrag) {
+      // Schon weg - aus der Warteschlange ist das der gewuenschte Zustand.
+      if (commandId) {
+        const antwort = { success: true, gone: true };
+        await rememberCommand(p, commandId, req.user.userId, 'log_delete', antwort);
+        return res.json(antwort);
+      }
+      return res.status(404).json({ error: 'Eintrag nicht gefunden' });
+    }
+    if (!allowed) {
+      return res.status(403).json({ error: 'Nur wer den Eintrag verfasst hat, darf ihn löschen' });
+    }
+
+    const anhaenge = await p.request()
+      .input('id', sql.NVarChar, eintrag.id)
+      .query('SELECT * FROM TaskAttachment WHERE logEntryId = @id');
+    if (anhaenge.recordset.length > 0) {
+      await deleteBlobs(anhaenge.recordset);
+      await p.request()
+        .input('id', sql.NVarChar, eintrag.id)
+        .query('DELETE FROM TaskAttachment WHERE logEntryId = @id');
+    }
+
+    await p.request()
+      .input('id', sql.NVarChar, eintrag.id)
+      .query('DELETE FROM TaskLogEntry WHERE id = @id');
+
+    const antwort = { success: true, removedAttachments: anhaenge.recordset.length };
+    await rememberCommand(p, commandId, req.user.userId, 'log_delete', antwort);
+    res.json(antwort);
   } catch (err) {
     res.status(500).json({ error: err.message });
   }

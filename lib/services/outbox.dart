@@ -8,7 +8,7 @@ import 'package:uuid/uuid.dart';
 /// Ein Auftrag, der zum Server gebracht werden muss.
 ///
 /// Bewusst allgemein gehalten (Methode, Pfad, Rumpf) statt für jede Aktion ein
-/// eigenes Format: So gibt es **eine** Abarbeitungsschleife für alle dreizehn
+/// eigenes Format: So gibt es **eine** Abarbeitungsschleife für alle fünfzehn
 /// Auftragsarten. Käme für jede eine eigene Behandlung hinzu, wäre die
 /// Warteschlange schnell die fehleranfälligste Stelle der App.
 class OutboxCommand {

@@ -152,12 +152,20 @@ CREATE INDEX IX_Task_Series_Completed ON Task (seriesId, completedAt);
 -- [user] haelt den Namen zum Zeitpunkt des Eintrags; die Anzeige bevorzugt
 --   den aktuellen AppUser.displayName (COALESCE in GET /tasks/:id/log).
 -- ----------------------------------------------------------------------------
+-- [user] ist der Anzeigename zum Zeitpunkt des Eintrags und dient nur der
+-- Darstellung. Die Berechtigung "nur der Verfasser darf aendern oder loeschen"
+-- haengt an createdBy: Anzeigenamen sind nicht eindeutig und aenderbar.
+-- Bei Eintraegen aus der Zeit vor v19 kann createdBy leer sein; die gehoeren
+-- dann niemandem und bleiben unveraenderlich.
+-- editedAt ist gesetzt, sobald der Text nachtraeglich geaendert wurde.
 CREATE TABLE TaskLogEntry (
     id        NVARCHAR(100)  NOT NULL PRIMARY KEY,
     taskId    NVARCHAR(100)  NOT NULL,
     [user]    NVARCHAR(100)  NULL,
     [text]    NVARCHAR(1000) NOT NULL,
     timestamp DATETIME2      NULL DEFAULT GETUTCDATE(),
+    createdBy NVARCHAR(100)  NULL,
+    editedAt  DATETIME2      NULL,
     CONSTRAINT FK_TaskLogEntry_Task FOREIGN KEY (taskId) REFERENCES Task(id)
 );
 

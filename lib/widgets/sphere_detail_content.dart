@@ -1608,6 +1608,7 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
         final isLast = index == entries.length - 1;
 
         final attachments = _attachmentsOf(entry.id);
+        final eigener = entry.istVon(AuthService.userId);
 
         return Column(
           children: [
@@ -1645,14 +1646,16 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
                         Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text(
-                              entry.user,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .titleSmall
-                                  ?.copyWith(fontWeight: FontWeight.bold),
+                            Expanded(
+                              child: Text(
+                                entry.user,
+                                overflow: TextOverflow.ellipsis,
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .titleSmall
+                                    ?.copyWith(fontWeight: FontWeight.bold),
+                              ),
                             ),
                             Text(
                               _formatDate(entry.timestamp),
@@ -1661,6 +1664,13 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                                   .bodySmall
                                   ?.copyWith(color: Colors.grey[600]),
                             ),
+                            // Nur beim eigenen Eintrag. Fremde Beiträge sind
+                            // die Aussage einer anderen Person – auch der
+                            // Pilot schreibt sie nicht um.
+                            if (eigener)
+                              _buildLogEntryMenu(entry)
+                            else
+                              const SizedBox(width: 8),
                           ],
                         ),
                         // Ein Eintrag darf inzwischen auch nur aus Anhaengen
@@ -1670,6 +1680,20 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
                           const SizedBox(height: 4),
                           Text(entry.text,
                               style: Theme.of(context).textTheme.bodyMedium),
+                        ],
+                        // Wer mitliest, soll erkennen, dass das nicht mehr der
+                        // ursprüngliche Wortlaut ist.
+                        if (entry.editedAt != null) ...[
+                          const SizedBox(height: 2),
+                          Text(
+                            'bearbeitet',
+                            style: Theme.of(context)
+                                .textTheme
+                                .bodySmall
+                                ?.copyWith(
+                                    color: Colors.grey[600],
+                                    fontStyle: FontStyle.italic),
+                          ),
                         ],
                         if (attachments.isNotEmpty) ...[
                           const SizedBox(height: 8),
@@ -1690,6 +1714,140 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
         );
       }),
     );
+  }
+
+  /// Drei-Punkte-Menü am eigenen Verlaufseintrag.
+  ///
+  /// Bewusst ein sichtbarer Knopf statt eines langen Drucks: Am Rechner gibt es
+  /// keinen langen Druck, und ein Bedienweg, den es nur auf dem Handy gibt,
+  /// wäre auf der Desktop-Version schlicht nicht vorhanden.
+  Widget _buildLogEntryMenu(TaskLogEntry entry) {
+    return SizedBox(
+      width: 32,
+      height: 32,
+      child: PopupMenuButton<String>(
+        padding: EdgeInsets.zero,
+        iconSize: 18,
+        tooltip: 'Eintrag bearbeiten oder löschen',
+        icon: Icon(Icons.more_vert, color: Colors.grey[600]),
+        onSelected: (wahl) {
+          if (wahl == 'bearbeiten') _editLogEntry(entry);
+          if (wahl == 'loeschen') _deleteLogEntry(entry);
+        },
+        itemBuilder: (context) => const [
+          PopupMenuItem(
+            value: 'bearbeiten',
+            child: ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.edit_outlined, size: 20),
+              title: Text('Bearbeiten'),
+            ),
+          ),
+          PopupMenuItem(
+            value: 'loeschen',
+            child: ListTile(
+              dense: true,
+              contentPadding: EdgeInsets.zero,
+              leading: Icon(Icons.delete_outline, size: 20),
+              title: Text('Löschen'),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _editLogEntry(TaskLogEntry entry) async {
+    final steuerung = TextEditingController(text: entry.text);
+    final neuerText = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Eintrag bearbeiten'),
+        content: TextField(
+          controller: steuerung,
+          autofocus: true,
+          maxLines: 5,
+          minLines: 2,
+          maxLength: 1000,
+          decoration: const InputDecoration(
+            border: OutlineInputBorder(),
+            hintText: 'Text des Eintrags',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('Abbrechen'),
+          ),
+          ElevatedButton(
+            onPressed: () =>
+                Navigator.pop(dialogContext, steuerung.text.trim()),
+            child: const Text('Speichern'),
+          ),
+        ],
+      ),
+    );
+    steuerung.dispose();
+
+    if (neuerText == null || neuerText == entry.text.trim()) return;
+
+    // Ein Eintrag ohne Text ist erlaubt, solange Anhänge daran hängen – sonst
+    // bliebe eine Kachelreihe ohne Zeile darüber übrig.
+    if (neuerText.isEmpty && _attachmentsOf(entry.id).isEmpty) {
+      _zeigeHinweis('Der Eintrag braucht einen Text oder einen Anhang.');
+      return;
+    }
+
+    try {
+      await _taskService.editLogEntry(widget.taskId, entry.id, neuerText);
+    } catch (e) {
+      _zeigeHinweis('Ändern fehlgeschlagen: $e');
+    }
+  }
+
+  Future<void> _deleteLogEntry(TaskLogEntry entry) async {
+    final anhaenge = _attachmentsOf(entry.id).length;
+    final bestaetigt = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('Eintrag löschen?'),
+        content: Text(
+          anhaenge == 0
+              ? 'Der Eintrag wird endgültig entfernt.'
+              : anhaenge == 1
+                  ? 'Der Eintrag und sein Anhang werden endgültig entfernt.'
+                  : 'Der Eintrag und seine $anhaenge Anhänge werden endgültig '
+                      'entfernt.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('Abbrechen'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red[700]),
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('Löschen'),
+          ),
+        ],
+      ),
+    );
+    if (bestaetigt != true) return;
+
+    try {
+      await _taskService.deleteLogEntry(widget.taskId, entry.id);
+      // Die eigene Kachelliste hier nachziehen. `_onServiceChanged` leert sie
+      // grundsätzlich nie – eine leere Liste heißt dort „noch nicht geladen".
+      // Beim Löschen ist die Verkleinerung aber gewollt und muss ankommen,
+      // sonst blieben Kacheln ohne ihren Eintrag stehen.
+      if (!mounted) return;
+      setState(() {
+        _attachments.removeWhere((a) => a.logEntryId == entry.id);
+      });
+    } catch (e) {
+      _zeigeHinweis('Löschen fehlgeschlagen: $e');
+    }
   }
 
   Widget _buildAddLogEntryForm() {

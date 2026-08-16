@@ -80,7 +80,7 @@ class ApiService {
   /// Führt einen beliebigen Auftrag aus der Warteschlange aus.
   ///
   /// Absichtlich allgemein: Die Warteschlange kennt nur Methode, Pfad und
-  /// Rumpf und braucht kein Wissen über die dreizehn Auftragsarten. Die
+  /// Rumpf und braucht kein Wissen über die fünfzehn Auftragsarten. Die
   /// Auftragskennung geht als `X-Command-Id` mit — daran erkennt der Server
   /// einen Wiedergänger und führt ihn nicht ein zweites Mal aus.
   static Future<Map<String, dynamic>> ausfuehren({

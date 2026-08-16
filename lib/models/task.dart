@@ -191,6 +191,37 @@ class Task {
     logCount = logEntries.length;
   }
 
+  /// Ersetzt den Text eines Eintrags. Gibt den vorherigen Stand zurueck, damit
+  /// der Aufrufer ihn bei einem Fehlschlag wiederherstellen kann.
+  TaskLogEntry? replaceLogEntry(String entryId, TaskLogEntry neu) {
+    final i = logEntries.indexWhere((e) => e.id == entryId);
+    if (i < 0) return null;
+    final vorher = logEntries[i];
+    logEntries[i] = neu;
+    return vorher;
+  }
+
+  /// Entfernt einen Eintrag samt seiner Anhaenge. Die Anhaenge muessen mit,
+  /// sonst blieben sie als Kacheln ohne zugehoerigen Eintrag stehen.
+  /// Rueckgabe ist der entfernte Stand fuer die Ruecknahme.
+  ({TaskLogEntry eintrag, List<SphereAttachment> anhaenge})? removeLogEntry(
+      String entryId) {
+    final i = logEntries.indexWhere((e) => e.id == entryId);
+    if (i < 0) return null;
+    final eintrag = logEntries.removeAt(i);
+    final betroffen =
+        attachments.where((a) => a.logEntryId == entryId).toList();
+    attachments.removeWhere((a) => a.logEntryId == entryId);
+    logCount = logEntries.length;
+    return (eintrag: eintrag, anhaenge: betroffen);
+  }
+
+  /// Macht [removeLogEntry] rueckgaengig.
+  void restoreLogEntry(TaskLogEntry eintrag, List<SphereAttachment> anhaenge) {
+    addLogEntry(eintrag);
+    attachments.addAll(anhaenge);
+  }
+
   /// Uebernimmt den vom Server geholten Verlauf.
   ///
   /// Setzt [logCount] gleich mit: Solange der Verlauf nicht geladen war, kam

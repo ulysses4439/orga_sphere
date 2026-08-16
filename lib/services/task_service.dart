@@ -569,6 +569,10 @@ class TaskService extends ChangeNotifier {
       user: AuthService.displayName ?? AuthService.email ?? 'Ich',
       timestamp: geschehenAm,
       text: text,
+      // Ohne das waere der eigene Eintrag bis zum naechsten Abruf vom Server
+      // nicht als eigener erkennbar - und damit nicht aenderbar, obwohl man
+      // ihn gerade selbst geschrieben hat.
+      createdBy: AuthService.userId,
     );
     task.addLogEntry(lokal);
     // Die Anhaenge des Formulars gehoeren ab jetzt zu diesem Eintrag.
@@ -615,6 +619,60 @@ class TaskService extends ChangeNotifier {
       notifyListeners();
       rethrow;
     }
+  }
+
+  /// Aendert den Text eines eigenen Verlaufseintrags.
+  ///
+  /// Die Pruefung, ob es ein eigener ist, macht der Server – hier steht sie
+  /// nur, damit die Oberflaeche nichts anbietet, was hinterher abgelehnt wird.
+  Future<void> editLogEntry(String taskId, String entryId, String text) async {
+    final task = getTaskById(taskId);
+    if (task == null) return;
+
+    final i = task.logEntries.indexWhere((e) => e.id == entryId);
+    if (i < 0) return;
+    final vorhanden = task.logEntries[i];
+    if (!vorhanden.istVon(AuthService.userId)) return;
+
+    final geaendert = vorhanden.copyWith(text: text, editedAt: DateTime.now());
+    final vorher = task.replaceLogEntry(entryId, geaendert);
+    if (vorher == null) return;
+    notifyListeners();
+
+    await _aendernMitWarteschlange(
+      kind: 'log_edit',
+      method: 'PATCH',
+      path: '/logs/$entryId',
+      body: {'text': text},
+      zuruecknehmen: () {
+        final current = getTaskById(taskId) ?? task;
+        current.replaceLogEntry(entryId, vorher);
+      },
+    );
+  }
+
+  /// Loescht einen eigenen Verlaufseintrag samt seiner Anhaenge.
+  Future<void> deleteLogEntry(String taskId, String entryId) async {
+    final task = getTaskById(taskId);
+    if (task == null) return;
+
+    final i = task.logEntries.indexWhere((e) => e.id == entryId);
+    if (i < 0) return;
+    if (!task.logEntries[i].istVon(AuthService.userId)) return;
+
+    final entfernt = task.removeLogEntry(entryId);
+    if (entfernt == null) return;
+    notifyListeners();
+
+    await _aendernMitWarteschlange(
+      kind: 'log_delete',
+      method: 'DELETE',
+      path: '/logs/$entryId',
+      zuruecknehmen: () {
+        final current = getTaskById(taskId) ?? task;
+        current.restoreLogEntry(entfernt.eintrag, entfernt.anhaenge);
+      },
+    );
   }
 
   Future<void> updateTaskTitle(String taskId, String title) async {
