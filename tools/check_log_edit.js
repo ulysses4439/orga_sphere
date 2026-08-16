@@ -153,8 +153,29 @@ async function main() {
     if (!token) throw new Error('Server hat kein Token geliefert');
     ok('angemeldet als ' + email);
 
-    // -- 2. Testumgebung anlegen ------------------------------------------
-    console.log('\n2. Testumgebung anlegen');
+    // -- 2. Ist der Server ueberhaupt schon ausgerollt? --------------------
+    //
+    // Ohne diese Probe legt der Test erst einen Orbit an, schreibt Eintraege
+    // und scheitert dann mitten im Ablauf an einer Express-Fehlerseite
+    // ("Cannot PATCH /logs/..."). Das sieht nach einem Fehler in der Sache
+    // aus, ist aber nur eine Route, die es auf dem Server noch nicht gibt.
+    console.log('\n2. Server pruefen');
+    const probe = await api(`/logs/${crypto.randomUUID()}`, {
+      method: 'PATCH',
+      json: { text: 'Probe' },
+    });
+    const probeText = await probe.text();
+    if (probeText.includes('Cannot PATCH')) {
+      throw new Error(
+        'Der Server kennt PATCH /logs/:id noch nicht.\n' +
+          '         Das Backend ist noch nicht ausgerollt. Erst pushen und die\n' +
+          '         GitHub-Action abwarten, dann diesen Test erneut starten.'
+      );
+    }
+    ok('Server kennt die neuen Endpunkte');
+
+    // -- 3. Testumgebung anlegen ------------------------------------------
+    console.log('\n3. Testumgebung anlegen');
     const orbit = await mussKlappen(
       await api('/domains', {
         method: 'POST',
@@ -183,7 +204,7 @@ async function main() {
     ok('Orbit und Sphere angelegt');
 
     // -- 3. Eintrag anlegen und Verfasser pruefen -------------------------
-    console.log('\n3. Eintrag anlegen');
+    console.log('\n4. Eintrag anlegen');
     const eintrag = await mussKlappen(
       await api('/logs', {
         method: 'POST',
@@ -200,7 +221,7 @@ async function main() {
     else fehler('neuer Eintrag war schon als bearbeitet markiert', 'editedAt: ' + frisch?.editedAt);
 
     // -- 4. Text aendern ---------------------------------------------------
-    console.log('\n4. Text aendern');
+    console.log('\n5. Text aendern');
     await mussKlappen(
       await api(`/logs/${eintrag.id}`, { method: 'PATCH', json: { text: 'Geaenderter Text' } }),
       'Eintrag aendern'
@@ -214,7 +235,7 @@ async function main() {
     else fehler('editedAt wurde nicht gesetzt');
 
     // -- 5. Leerer Text ohne Anhang wird abgelehnt ------------------------
-    console.log('\n5. Leerer Eintrag');
+    console.log('\n6. Leerer Eintrag');
     const leer = await api(`/logs/${eintrag.id}`, { method: 'PATCH', json: { text: '   ' } });
     if (leer.status === 400) ok('leerer Text ohne Anhang wird abgelehnt');
     else fehler('leerer Text wurde angenommen', 'HTTP ' + leer.status);
@@ -226,7 +247,7 @@ async function main() {
     // Eintraege aus) niemandem gehoert und darum unveraenderlich ist. Dafuer
     // braucht es eine Kennung, die es nicht gibt - der Server muss 404 sagen,
     // nicht etwa stillschweigend etwas anderes treffen.
-    console.log('\n6. Fremde und unbekannte Eintraege');
+    console.log('\n7. Fremde und unbekannte Eintraege');
     const erfunden = await api(`/logs/${crypto.randomUUID()}`, {
       method: 'PATCH',
       json: { text: 'Fremd' },
@@ -235,7 +256,7 @@ async function main() {
     else fehler('unbekannte Kennung nicht abgewiesen', 'HTTP ' + erfunden.status);
 
     // -- 7. Warteschlange: derselbe Auftrag zweimal ------------------------
-    console.log('\n7. Auftrag aus der Warteschlange doppelt geschickt');
+    console.log('\n8. Auftrag aus der Warteschlange doppelt geschickt');
     const auftrag = crypto.randomUUID();
     await mussKlappen(
       await api(`/logs/${eintrag.id}`, {
@@ -267,7 +288,7 @@ async function main() {
     }
 
     // -- 8. Loeschen samt Anhang -------------------------------------------
-    console.log('\n8. Eintrag mit Anhang loeschen');
+    console.log('\n9. Eintrag mit Anhang loeschen');
     const form = new FormData();
     form.append('file', new Blob([TESTBILD], { type: 'image/png' }), 'selbsttest.png');
     const anhang = await mussKlappen(
@@ -301,7 +322,7 @@ async function main() {
     else fehler('Anhang lebt nach dem Loeschen weiter', 'HTTP ' + inhalt.status);
 
     // -- 9. Loeschen doppelt geschickt -------------------------------------
-    console.log('\n9. Loeschauftrag doppelt geschickt');
+    console.log('\n10. Loeschauftrag doppelt geschickt');
     const loeschauftrag = crypto.randomUUID();
     const ersteAntwort = await api(`/logs/${eintrag.id}`, {
       method: 'DELETE',
