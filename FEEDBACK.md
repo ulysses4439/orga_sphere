@@ -10,7 +10,34 @@ festgehalten, ob und wie weit sich die Änderung auf beiden Plattformen realisie
 
 ## Offen
 
-_(keine offenen Punkte – neue Meldungen hier eintragen)_
+### A. Anhänge sind offline nur sichtbar, solange die App läuft
+**Festgestellt:** 16.08.2026 · **Von Steven als nicht dringend eingestuft**
+
+Vorschaubilder werden über `Image.network` geladen. Ohne Verbindung erscheinen sie nur, solange
+sie noch in Flutters Bildspeicher im Arbeitsspeicher liegen — nach einem Neustart der App zeigen
+sie den Wolken-Platzhalter, und Dateien lassen sich offline gar nicht öffnen. Ein Zwischenspeicher
+auf der Platte würde beides lösen, braucht aber Ablageort, Größenbegrenzung und Aufräumen.
+
+### B. Eine Sphere, die online nie geöffnet war, hat offline keinen Verlauf
+**Festgestellt:** 16.08.2026 · **Verhalten ist erklärt, aber unbefriedigend**
+
+Verlauf und Anhänge holt die App erst beim Öffnen einer Sphere. Wer offline eine Sphere aufmacht,
+die er vorher nie offen hatte, sieht deshalb den Hinweis „Der Verlauf ist gerade nicht abrufbar"
+statt der Einträge. Das ist ehrlich, aber es bleibt eine Lücke: Man erfährt nicht, dass es dort
+überhaupt etwas gibt. Ließe sich schließen, indem der Verlauf im Hintergrund für alle Spheres
+vorgeladen wird — das kostet Abrufe und wurde bewusst noch nicht gemacht.
+
+### C. Lesestatus der Glocke liegt pro Gerät, nicht pro Konto
+**Festgestellt:** 08.08.2026 (siehe Punkt 10) · **bisher nicht beauftragt**
+
+Am Desktop gelesen heißt am Handy noch ungelesen. Ließe sich mit derselben Technik wie das
+Ausblenden auf das Konto umstellen.
+
+### D. Der Einladungsbanner zeigt noch den farbigen Punkt
+**Festgestellt:** 16.08.2026 · **Kleinigkeit**
+
+Seit Punkt 24 haben Orbits ein Symbol. Im Banner „Du wurdest eingeladen" steht weiterhin der alte
+farbige Punkt statt des Symbols.
 
 ---
 
@@ -176,6 +203,10 @@ Windows-Profil getrennt — jedes Profil kann sich mit einem eigenen OrgaSphere-
 
 **Paketinhalt geändert:** Ab v1.0.15 enthält das ZIP **vier** Dateien; `install_orgasphere.ps1`
 gehört jetzt zwingend dazu, die `.bat` ruft sie nur noch auf.
+
+> **Inzwischen überholt:** Seit v1.0.20 gibt es kein ZIP mehr. Ausgeliefert wird der Ordner
+> `OrgaSphere_Beta_vX.Y.Z\` mit fünf Dateien — die vier von oben plus die Android-APK, die nicht
+> mehr als GitHub-Release veröffentlicht wird. Am Installer selbst ändert das nichts.
 
 ### 13. Langer Sphere-Titel lässt sich nicht speichern — ohne jeden Hinweis
 **Gemeldet:** 12.08.2026 · **Erledigt in:** v1.0.16 · **Plattformen:** Desktop + App
@@ -421,6 +452,189 @@ Grundregel nichts zu tun hat.
 
 **Ohne neues Paket gebaut:** Die Breite liegt im selben lokalen Speicher wie Anmeldetoken und
 Glocken-Zustand (`UiPrefs`, nach dem Vorbild von `NotificationCenter`).
+
+### 22. Die App braucht auf dem Handy zu lange zum Starten
+**Gemeldet:** 14.08.2026 · **Erledigt in:** v1.0.19 · **Plattformen:** Desktop + App
+
+**Problem:** Der Start dauerte spürbar lange, besonders bei schlechtem Empfang. Ohne Netz blieb
+der Bildschirm ganz leer.
+
+**Ursache — vier Dinge, die sich gegenseitig verstärkten:**
+- Der Start machte drei Abrufe nacheinander **plus einen `GET /logs/<id>` pro Sphere**. Bei
+  40 Spheres waren das 43 Anfragen, bevor überhaupt etwas zu sehen war.
+- Jede dieser Anfragen baute eine **eigene TCP+TLS-Verbindung** auf — `package:http` in der
+  Kurzform `http.get(...)` hält keine Verbindung offen. Deshalb wuchs die Ladezeit bei schwachem
+  Netz überproportional.
+- Bis alles fertig war, zeigte die Oberfläche nur den Ladekreisel; der 30-Sekunden-Takt
+  wiederholte den kompletten Vorgang samt aller Verläufe.
+- Außer Token und Einstellungen lag nichts auf dem Gerät.
+
+**Geprüft, bevor etwas geändert wurde:** Die Infrastruktur war *nicht* die Ursache — Azure
+antwortet warm in etwa 110 ms, Always On ist an, ein Kaltstart also ausgeschlossen. Auch der
+Azure-Schalter „HTTP/2" hätte nichts gebracht: Der HTTP-Client von Dart kann kein HTTP/2, das
+wurde im SDK nachgesehen. Der Gewinn kommt aus HTTP/1.1 mit offen gehaltener Verbindung.
+
+**Lösung:**
+- Ein gemeinsamer `http.Client` für die ganze App inklusive Anmeldung, mit 20-Sekunden-Zeitlimit.
+- Neuer Endpunkt `GET /sync` liefert Orbits, offene und erledigte Spheres in **einer** Antwort.
+  Die alten Einzelendpunkte bleiben für ältere App-Fassungen bestehen; die App fällt bei 404 auf
+  sie zurück.
+- Verlaufseinträge werden nicht mehr beim Start geladen, sondern erst beim Öffnen einer Sphere.
+  Die Liste zeigt stattdessen nur die Anzahl, die der Server mitzählt.
+- Ein lokaler Zwischenspeicher (JSON-Datei, an das Konto gebunden, beim Abmelden gelöscht) zeigt
+  sofort den letzten bekannten Stand. Dazu der Hinweisbalken „Keine Verbindung — Stand vor X
+  Minuten", damit niemand einen alten Stand für den aktuellen hält.
+
+**Mit erledigt:** Das Abhaken einer Sphere wirkte erst nach dem nächsten Abgleich sichtbar. Es
+wird jetzt sofort angezeigt und bei einem Fehlschlag zurückgenommen.
+
+### 23. Bilder und Dateien in Einträgen des Aktivitätsverlaufs
+**Gewünscht:** 15.08.2026 · **Umgesetzt in:** v1.0.20 · **Nachgebessert bis:** v1.0.27 ·
+**Plattformen:** Desktop + App
+
+**Wunsch:** Screenshots in Verlaufseinträge einfügen können, um den Verlauf als
+Austauschplattform zwischen Entwickler und Tester zu nutzen. Im Gespräch erweitert auf beliebige
+Dateien (PDF, Word, Excel).
+
+**Entschieden vor dem Bauen:** Aufbewahrung 365 Tage, höchstens 10 MB je Datei und 5 Anhänge je
+Eintrag. Löschen darf, wer hochgeladen hat — und der Pilot. Anhänge stehen als **eigener
+Kachelstreifen unter dem Eintrag**, nicht mitten im Text: Ein Textfeld mit eingebetteten Bildern
+bräuchte ein Rich-Text-Format und würde die bestehenden Einträge unlesbar machen.
+
+**Wo die Dateien liegen:** Azure Blob Storage (Container `sphere-attachments`), nicht in der
+Datenbank. Binärdaten in Azure SQL wären der teuerste denkbare Speicherplatz und würden den
+Basic-Tarif mit seinen 2 GB sprengen. In der Datenbank steht nur, was zu welchem Eintrag gehört.
+
+**Bedienung:** Auswahl über einen Knopf, aus der Galerie, oder per **Strg+V** aus der
+Zwischenablage — auf dem Rechner ist das der Weg, den man für einen Screenshot erwartet.
+Antippen öffnet die Datei, ein kleines Symbol daneben speichert oder teilt sie. PDFs, Word- und
+Excel-Dateien öffnen im dafür zuständigen Programm statt nur im Teilen-Dialog zu landen.
+
+**Sechs Fehler aus den Testrunden, die es wert sind, festgehalten zu werden:**
+- Die Anhangsliste kam leer an, weil der SQL-Treiber `sizeBytes` als **Zeichenkette** lieferte,
+  nicht als Zahl. Sichtbar war nur „keine Anhänge" — ohne jede Fehlermeldung.
+- Azure lehnte Uploads mit **„The metadata specified is invalid"** ab, sobald der Dateiname
+  Umlaute enthielt: Der Dateiname geht in einen HTTP-Kopf, und HTTP-Köpfe sind reines ASCII.
+  Umlaute werden jetzt umgeschrieben (`Erklärung.pdf` → `Erklaerung.pdf`).
+- `Image.network` meldet ohne Verbindung keinen Fehler, sondern lädt endlos. Nach acht Sekunden
+  wird jetzt abgebrochen und ein antippbarer Platzhalter gezeigt.
+- Die Kacheln verschwanden nach etwa 13 Sekunden wieder. Ursache war eine Bedingung, die eine
+  **noch nicht geladene** Anhangsliste mit „es gibt keine" verwechselte. Die 13 Sekunden waren
+  schlicht die Antwortzeit des Servers.
+- Anschließend verschwanden sie erneut, diesmal nach 30 Sekunden: Der Abgleich baut die
+  Sphere-Objekte neu auf, und die Antwort von `GET /sync` enthält keine Anhänge. Sie wurden nicht
+  mit übernommen — und der Zwischenspeicher schrieb den leeren Stand aufs Gerät.
+- Eine offen gebliebene Sphere lud nach der Rückkehr ins Netz nicht nach, weil das Merkmal
+  „Verlauf konnte nicht geladen werden" dauerhaft stehenblieb.
+
+### 24. Orbits mit einem Symbol statt eines farbigen Punkts
+**Gewünscht:** 15.08.2026 · **Umgesetzt in:** v1.0.20 · **Plattformen:** Desktop + App
+
+Ein Orbit trägt jetzt wahlweise ein Emoji, das den farbigen Punkt ersetzt. Ohne gewähltes Symbol
+bleibt es beim Punkt — bestehende Orbits sehen also unverändert aus.
+
+**Bewusst keine eigenen Bilddateien:** Ein hochgeladenes Symbol bräuchte Speicherort, Zuschnitt,
+Größenbegrenzung und Aufräumen, und in der Orbit-Liste wäre es bei 24 Pixeln Kantenlänge ohnehin
+kaum zu erkennen. Emojis bringen all das mit und werden auf jedem Gerät sauber dargestellt.
+
+### 25. Gelandete Spheres sammeln sich unbegrenzt an
+**Gewünscht:** 15.08.2026 · **Umgesetzt in:** v1.0.20 · **Plattformen:** Desktop + App (Backend)
+
+**Anlass:** Die Datenbank soll klein bleiben — im Basic-Tarif sind 2 GB die Grenze, und erledigte
+Spheres wuchsen ohne Ende weiter.
+
+**Regel:** Bei einer Wiederholung behält der Orbit die letzten **20 gelandeten Ausgaben je Serie**
+(vom Piloten änderbar). Einmalige Spheres werden 365 Tage nach dem Erledigen gelöscht. Das
+Aufräumen erledigt derselbe Scheduler, der auch die Erinnerungen verschickt.
+
+**Zählung je Serie statt je Orbit:** Sonst hätte eine tägliche Sphere nach drei Wochen alle
+anderen aus dem Archiv verdrängt. Anhänge gelöschter Spheres verschwinden mit.
+
+### 26. Ohne Netz lässt sich gar nichts ändern
+**Gemeldet:** 15.08.2026 · **Umgesetzt in:** v1.0.21 · **Nachgebessert bis:** v1.0.27 ·
+**Plattformen:** Desktop + App (Backend)
+
+**Anlass:** Beim Einkaufen im Funkloch ließ sich keine Position abhaken. Lesen ging seit Punkt 22,
+Ändern nicht. Stevens Vorgabe: *„Die App soll sich anfühlen wie immer, nur dass nachträglich
+synchronisiert wird."*
+
+**Lösung — eine Warteschlange auf dem Gerät.** Jede Änderung wirkt sofort in der Anzeige und wird,
+wenn kein Netz da ist, als Auftrag gespeichert. Beim nächsten Kontakt gehen die Aufträge in ihrer
+ursprünglichen Reihenfolge raus. Die Warteschlange hält bei der **ersten** Absage an, statt die
+folgenden zu überspringen — sonst käme „umbenennen" vor „anlegen" an.
+
+**Damit ein Auftrag nicht zweimal wirkt:** Die App vergibt die Kennungen selbst und schickt zu
+jedem Auftrag eine `X-Command-Id` mit. Der Server merkt sich je Auftrag seine Antwort und liefert
+bei einer Wiederholung dieselbe zurück, statt die Änderung ein zweites Mal auszuführen. Ohne das
+hätte ein Wackelkontakt aus einer Sphere zwei gemacht.
+
+**Der schwierigste Fall waren die Wiederholungen.** Beispiel aus dem Gespräch: eine tägliche
+Erinnerung „morgens Medikamente nehmen", abgehakt während eines Flugs nach Australien. Das Gerät
+legt die Folge-Sphere lokal an, der Scheduler auf dem Server tut dasselbe — und beide müssten
+dieselbe meinen, sonst steht die Sphere hinterher doppelt da. Gelöst über eine **berechenbare
+Kennung** aus Seriennummer und Datum (`<seriesId>:<JJJJ-MM-TT>`): Beide Seiten kommen zwangsläufig
+auf denselben Wert. Von Steven per Datenbankabfrage gegengeprüft — keine doppelten Ausgaben.
+
+**Anhänge werden zwischengelagert:** Wer ohne Netz ein Bild anhängt, dessen Datei bleibt auf dem
+Gerät liegen und wird beim Abgleich hochgeladen. Bleibt eine Datei übrig, weil der Eintrag
+verworfen wurde, räumt die App sie weg.
+
+**Konflikte:** Feldweise gilt die zuletzt entstandene Änderung, gemessen am Zeitpunkt auf dem
+Gerät — nie in der Zukunft und höchstens 30 Tage alt, damit eine falsch gestellte Geräteuhr
+nichts überschreibt. Ein Hinweis dazu erscheint nur in der Glocke, nicht als Dialog.
+
+**Ein Fehler, der drei Testrunden gekostet hat:** Offline erfasste Zeitpunkte kamen auf dem Server
+falsch an. `DateTime.now().toIso8601String()` hängt **keine Zeitzone** an; Azure läuft auf UTC und
+las deutsche Sommerzeit als UTC — die Zeit lag damit zwei Stunden in der Zukunft und wurde auf
+„jetzt" gekappt. Stevens Datenbankabfrage lieferte deshalb dreimal null Zeilen. Ich hatte das
+zweimal als Eigenart des Tests abgetan; erst sein Beharren hat den Fehler aufgedeckt. Alle fünf
+Stellen rechnen jetzt vorher nach UTC um.
+
+**Was von diesem Vorhaben bewusst NICHT gebaut wurde:** Der Abgleich holt weiterhin alle
+30 Sekunden den **vollen** Stand. Ein echtes Delta (`GET /sync?since=…` mit Grabsteinen für
+Gelöschtes) wäre der größte verbliebene Hebel für die Datenbanklast — bisher nicht beauftragt.
+
+### 27. Ein Eintrag im Aktivitätsverlauf lässt sich nicht korrigieren
+**Gemeldet:** 16.08.2026 · **Umgesetzt in:** v1.0.28 · **Nachgebessert in:** v1.0.29 ·
+**Plattformen:** Desktop + App (Backend)
+
+**Problem:** Ein einmal abgeschickter Verlaufseintrag war endgültig. Weder Tippfehler noch ein
+versehentlich abgeschickter Eintrag ließen sich beheben.
+
+**Lösung:** Am **eigenen** Eintrag sitzt rechts neben der Uhrzeit ein Drei-Punkte-Menü mit
+„Bearbeiten" und „Löschen". Bewusst ein sichtbarer Knopf statt eines langen Drucks — am Rechner
+gibt es keinen langen Druck, und ein Bedienweg nur fürs Handy widerspräche der Grundregel oben.
+
+**Nur der Verfasser, ausdrücklich auch nicht der Pilot.** Beim Löschen von Dateien darf der Pilot
+mitreden (Punkt 23), hier nicht: Ein Eintrag ist die Aussage einer Person, und sie in ihrem Namen
+umzuschreiben ist etwas anderes, als eine Datei aufzuräumen.
+
+**Die Berechtigung hängt an einer neuen Spalte `createdBy`**, nicht am angezeigten Namen. Der
+Name ist weder eindeutig — zwei Konten dürfen denselben tragen — noch stabil: Wer ihn ändert,
+hätte sonst den Zugriff auf seine eigenen Einträge verloren. Migration `v19_log_entry_author.sql`
+ordnet bestehende Einträge ihrem Konto zu, aber **nur wo die Zuordnung eindeutig ist**. Lieber
+bleibt ein Alteintrag unveränderlich, als dass der Falsche ihn ändern darf.
+
+**Zwei Dinge über den Wunsch hinaus, beide begründet:**
+- Ein geänderter Eintrag trägt darunter den Vermerk **„bearbeitet"**. Sonst könnte jemand seinen
+  Beitrag im Nachhinein umschreiben, ohne dass es den anderen im Orbit auffällt.
+- **Beim Löschen gehen die Anhänge mit.** Sie hängen am Eintrag und wären danach in keiner Ansicht
+  mehr erreichbar, würden im Blob Storage aber ein Jahr lang weiter Platz kosten.
+
+Beides funktioniert ohne Netz über die Warteschlange aus Punkt 26; schlägt der Server fehl, kommen
+Eintrag *und* Anhänge zurück.
+
+**Fehler aus der Testrunde v1.0.28, behoben in v1.0.29:** Ältere eigene Einträge hatten zunächst
+kein Menü — auf dem Handy erschien es nach einigen Sekunden bei allen, auf dem Rechner blieb es
+beim neuesten Eintrag. Zwei Ursachen: Der Zwischenspeicher hielt Einträge fest, die eine ältere
+Fassung der App ohne `createdBy` geschrieben hatte (sein Formatstand wird jetzt hochgezählt und
+ein alter Stand verworfen). Und der Verlauf einer offenen Sphere wurde nur neu geholt, wenn sich
+die **Anzahl** der Einträge änderte — eine reine Textänderung vom anderen Gerät wäre damit nie
+angekommen. Die offene Sphere holt ihren Verlauf jetzt bei jedem Abgleich mit.
+
+**Serverseitig geprüft** mit `tools/check_log_edit.js`: 15 von 15, darunter der doppelt geschickte
+Auftrag aus der Warteschlange und der Nachweis, dass der Anhang eines gelöschten Eintrags wirklich
+aus dem Speicher verschwindet.
 
 ---
 
