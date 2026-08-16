@@ -2,7 +2,7 @@ import 'dart:io' show File, Platform;
 
 import 'package:file_selector/file_selector.dart';
 import 'package:flutter/foundation.dart'
-    show compute, defaultTargetPlatform, TargetPlatform;
+    show compute, defaultTargetPlatform, listEquals, TargetPlatform;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:pasteboard/pasteboard.dart';
@@ -468,7 +468,14 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
     // übernehmen. Ohne das sah man nach einem verspäteten Nachladen zwar die
     // Einträge, aber keine Kacheln – bis man die Sphere verließ und erneut
     // öffnete.
-    if (updated.attachments.length != _attachments.length) {
+    //
+    // NIEMALS leeren: Eine leere Liste an der Sphere heißt „noch nicht
+    // geladen", nicht „es gibt keine". Wer sich darauf ausrichtet, wirft
+    // bereits angezeigte Kacheln weg – erst nach ein paar Sekunden, wenn die
+    // Antwort des Servers eintrifft, und wieder nach jedem Zurückkehren aus
+    // einem Dialog.
+    if (updated.attachments.isNotEmpty &&
+        !listEquals(updated.attachments, _attachments)) {
       _attachments = List.of(updated.attachments);
       _attachmentsLoaded = true;
     }
@@ -566,16 +573,25 @@ class _SphereDetailContentState extends State<SphereDetailContent> {
         widget.taskId,
         _logTextController.text.trim(),
         attachmentIds: _pendingUploads.map((a) => a.id).toList(),
+        // Die Kacheln wandern mit in den Eintrag. Ohne das stand ein ohne
+        // Verbindung abgeschickter Eintrag im Verlauf ohne seine Anhänge da –
+        // der Server weiß ja noch nichts von ihnen.
+        wartendeAnhaenge: List.of(_pendingUploads),
       );
       _logTextController.clear();
       if (!mounted) return;
       setState(() {
         _task = _taskService.getTaskById(widget.taskId);
+        // Die Anhänge hat der Dienst dem neuen Eintrag bereits zugeordnet –
+        // von dort übernehmen, damit sie sofort unter ihm stehen. Ein Abruf
+        // beim Server käme ohne Verbindung zu spät oder gar nicht.
+        _attachments = List.of(_task?.attachments ?? const []);
+        _attachmentsLoaded = true;
         _pendingUploads = [];
         _isBusy = false;
       });
-      // Die Anhänge gehören jetzt zum neuen Eintrag – frisch holen, damit sie
-      // im Verlauf an der richtigen Stelle auftauchen.
+      // Mit Verbindung zusätzlich den echten Stand holen: Dann trägt der
+      // Anhang die Angaben des Servers statt der örtlichen Vorschau.
       _loadAttachments();
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Eintrag hinzugefügt')),

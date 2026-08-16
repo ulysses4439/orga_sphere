@@ -105,6 +105,25 @@ class SphereAttachment {
     );
   }
 
+  /// Kopie mit geändertem Verlaufseintrag.
+  ///
+  /// Gebraucht, wenn ein Eintrag ohne Verbindung abgeschickt wird: Der Anhang
+  /// gehört dann sofort dazu, obwohl der Server davon noch nichts weiß.
+  SphereAttachment mitLogEintrag(String neueLogEntryId) => SphereAttachment(
+        id: id,
+        taskId: taskId,
+        logEntryId: neueLogEntryId,
+        fileName: fileName,
+        contentType: contentType,
+        sizeBytes: sizeBytes,
+        isImage: isImage,
+        uploadedBy: uploadedBy,
+        uploadedByName: uploadedByName,
+        createdAt: createdAt,
+        blobDeletedAt: blobDeletedAt,
+        localPath: localPath,
+      );
+
   /// Fuer den lokalen Zwischenspeicher – Feldnamen wie in der Server-Antwort,
   /// damit [SphereAttachment.fromJson] beide Quellen liest.
   ///

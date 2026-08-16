@@ -184,15 +184,23 @@ class TaskService extends ChangeNotifier {
     if (task.logsLoaded && !force) return;
     try {
       final logs = await ApiService.getLogs(taskId);
-      task.setLogEntries(logs);
-      notifyListeners();
 
-      // Anhaenge danach - ihr Fehlschlag darf den Verlauf nicht entwerten.
+      // Anhaenge VOR dem Melden holen. Wuerde hier zwischendurch benachrichtigt,
+      // saehe die Oberflaeche einen Zwischenzustand: Eintraege schon da,
+      // Anhangsliste noch leer - und wer sich daran ausrichtet, wirft seine
+      // bereits angezeigten Kacheln weg. Genau das ist passiert, sichtbar als
+      // "nach ein paar Sekunden verschwinden die Vorschaubilder".
+      List<SphereAttachment>? anhaenge;
       try {
-        task.setAttachments(await ApiService.getAttachments(taskId));
+        anhaenge = await ApiService.getAttachments(taskId);
       } catch (e) {
+        // Ihr Fehlschlag darf den Verlauf nicht entwerten.
         debugPrint('[Anhänge] nicht geladen: $e');
       }
+
+      task.setLogEntries(logs);
+      if (anhaenge != null) task.setAttachments(anhaenge);
+      notifyListeners();
       _touch();
     } catch (e) {
       // Ohne Netz bleibt es beim zwischengespeicherten Stand. Wichtig ist das
@@ -527,8 +535,12 @@ class TaskService extends ChangeNotifier {
     );
   }
 
+  /// [wartendeAnhaenge] sind die Kacheln aus dem Formular. Sie werden dem neuen
+  /// Eintrag SOFORT lokal zugeordnet – ohne Verbindung erfährt der Server erst
+  /// später davon, und bis dahin stünde der Eintrag sonst ohne seine Anhänge da.
   Future<void> addLogEntry(String taskId, String text,
-      {List<String> attachmentIds = const []}) async {
+      {List<String> attachmentIds = const [],
+      List<SphereAttachment> wartendeAnhaenge = const []}) async {
     final task = getTaskById(taskId);
     if (task == null) return;
 
@@ -548,6 +560,10 @@ class TaskService extends ChangeNotifier {
       text: text,
     );
     task.addLogEntry(lokal);
+    // Die Anhaenge des Formulars gehoeren ab jetzt zu diesem Eintrag.
+    for (final a in wartendeAnhaenge) {
+      task.attachments.add(a.mitLogEintrag(eintragId));
+    }
     final vorherigerStatus = task.status;
     if (task.status == TaskStatus.open) task.status = TaskStatus.inProgress;
     notifyListeners();
@@ -582,6 +598,7 @@ class TaskService extends ChangeNotifier {
       _touch();
     } catch (e) {
       task.logEntries.removeWhere((l) => l.id == eintragId);
+      task.attachments.removeWhere((a) => a.logEntryId == eintragId);
       task.logCount = task.logEntries.length;
       task.status = vorherigerStatus;
       notifyListeners();
